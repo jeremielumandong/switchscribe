@@ -110,6 +110,17 @@ const MIGRATIONS: &[&str] = &[
         created_at  INTEGER NOT NULL
     );
     "#,
+    // 4: integrations (M5): the Jira issue an action item became, the calendar event a
+    // meeting matched (serialized by the app), and sealed secrets such as OAuth tokens.
+    r#"
+    ALTER TABLE action_items ADD COLUMN jira_key TEXT;
+    ALTER TABLE action_items ADD COLUMN jira_url TEXT;
+    ALTER TABLE meetings ADD COLUMN calendar_json TEXT;
+    CREATE TABLE secrets (
+        name TEXT PRIMARY KEY,
+        blob BLOB NOT NULL
+    );
+    "#,
 ];
 
 /// An open index.
@@ -395,6 +406,58 @@ impl Store {
             "UPDATE meetings SET title = ?2 WHERE id = ?1",
             params![id, title],
         )?;
+        Ok(())
+    }
+
+    /// Store the calendar event a meeting matched (JSON written by the app), or clear it.
+    pub fn set_meeting_calendar(&self, id: &str, json: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE meetings SET calendar_json = ?2 WHERE id = ?1",
+            params![id, json],
+        )?;
+        Ok(())
+    }
+
+    /// The calendar event stored with [`Store::set_meeting_calendar`], if any.
+    pub fn meeting_calendar(&self, id: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT calendar_json FROM meetings WHERE id = ?1",
+                [id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Store a secret (an OAuth token, an API token) sealed for this user, replacing any
+    /// previous value under `name`.
+    pub fn set_secret(&self, name: &str, value: &[u8]) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO secrets (name, blob) VALUES (?1, ?2)
+             ON CONFLICT (name) DO UPDATE SET blob = excluded.blob",
+            params![name, secret::seal(value)],
+        )?;
+        Ok(())
+    }
+
+    /// A secret stored with [`Store::set_secret`]; `None` when there is none or it cannot
+    /// be unsealed here (another user's or machine's).
+    pub fn secret(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        let blob: Option<Vec<u8>> = self
+            .conn
+            .query_row("SELECT blob FROM secrets WHERE name = ?1", [name], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(blob.and_then(|b| secret::open(&b)))
+    }
+
+    /// Forget a secret.
+    pub fn remove_secret(&self, name: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM secrets WHERE name = ?1", [name])?;
         Ok(())
     }
 
@@ -712,6 +775,41 @@ mod tests {
         assert_eq!(got.status, MeetingStatus::Processing);
         assert_eq!(got.duration_secs, 1834);
         assert_eq!(got.title, "Cerberus rollout sync");
+    }
+
+    #[test]
+    fn meeting_calendar_json() {
+        let mut s = Store::open_in_memory().unwrap();
+        s.insert_meeting(&meeting("m", 1, vec![])).unwrap();
+        assert_eq!(s.meeting_calendar("m").unwrap(), None);
+        s.set_meeting_calendar("m", Some(r#"{"subject":"Sync"}"#))
+            .unwrap();
+        assert_eq!(
+            s.meeting_calendar("m").unwrap().as_deref(),
+            Some(r#"{"subject":"Sync"}"#)
+        );
+        s.set_meeting_calendar("m", None).unwrap();
+        assert_eq!(s.meeting_calendar("m").unwrap(), None);
+        assert_eq!(s.meeting_calendar("missing").unwrap(), None);
+    }
+
+    #[test]
+    fn secrets_round_trip() {
+        let s = Store::open_in_memory().unwrap();
+        assert_eq!(s.secret("graph").unwrap(), None);
+        s.set_secret("graph", b"token-1").unwrap();
+        s.set_secret("graph", b"token-2").unwrap();
+        assert_eq!(s.secret("graph").unwrap().as_deref(), Some(&b"token-2"[..]));
+        // Sealed at rest: the stored blob is not the plain value.
+        let blob: Vec<u8> = s
+            .conn
+            .query_row("SELECT blob FROM secrets WHERE name = 'graph'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_ne!(blob, b"token-2");
+        s.remove_secret("graph").unwrap();
+        assert_eq!(s.secret("graph").unwrap(), None);
     }
 
     #[test]
