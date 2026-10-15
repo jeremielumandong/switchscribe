@@ -81,7 +81,15 @@ pub fn render(ws: &Workspace, m: &Meeting, p: &Palette, cx: &mut Context<Workspa
         .min_h_0()
         .flex()
         .flex_col()
-        .child(header(ws, m, transcript.len(), action_count, transcribing, p, cx))
+        .child(header(
+            ws,
+            m,
+            transcript.len(),
+            action_count,
+            transcribing,
+            p,
+            cx,
+        ))
         .child(
             div()
                 .id("meeting-body")
@@ -465,14 +473,12 @@ fn transcript_rows(
                             .flex()
                             .flex_none()
                             .gap(px(2.))
-                            .child(
-                                seg_tool("seg-play", "Play", p)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.play_from(at, cx)
-                                    })),
-                            )
+                            .child(seg_tool("seg-play", "Play", p).cursor_pointer().on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.play_from(at, cx)
+                                }),
+                            ))
                             .children(
                                 ["Copy", "Edit", "Relabel"]
                                     .map(|label| seg_tool(label, label, p).opacity(0.6)),

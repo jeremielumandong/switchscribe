@@ -19,6 +19,8 @@ their GPUI stack and design system.
 
 ![Recording: the live view, notes and the mini recorder](docs/screenshots/recording-live.png)
 
+![A transcript following playback at 2×](docs/screenshots/transcript-player.png)
+
 ## Run it
 
 ```bash

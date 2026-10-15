@@ -195,7 +195,10 @@ pub fn decode_stream(path: &Path, rate: u32, sink: &mut dyn FnMut(&[f32])) -> Re
     let ch = channels as usize;
     // Granule positions and pre-skip count 48 kHz samples whatever the decode rate.
     let scale = |n: u64| (n * u64::from(rate) / u64::from(SAMPLE_RATE)) as usize;
-    let pre_skip = scale(u64::from(u16::from_le_bytes([head.data[10], head.data[11]])));
+    let pre_skip = scale(u64::from(u16::from_le_bytes([
+        head.data[10],
+        head.data[11],
+    ])));
     // Comment header.
     reader
         .read_packet()?
@@ -292,7 +295,11 @@ mod tests {
         for rate in [16_000, 24_000] {
             let low = decode_file_at(&path, rate).unwrap();
             let expect = input.len() * rate as usize / SAMPLE_RATE as usize;
-            assert!(low.len().abs_diff(expect) <= 1, "{rate}: {} vs {expect}", low.len());
+            assert!(
+                low.len().abs_diff(expect) <= 1,
+                "{rate}: {} vs {expect}",
+                low.len()
+            );
             let level = crate::audio::rms(&low[low.len() / 10..low.len() * 9 / 10]);
             assert!((level - 0.212).abs() < 0.03, "{rate}: {level}");
             let mut chunks = 0;

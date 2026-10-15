@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _, div, px,
+    AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, div, px,
 };
 use switchscribe_capture::RecorderState;
 use switchscribe_pipeline::JobInput;
@@ -131,6 +131,14 @@ fn needs_model_banner() -> Banner {
 }
 
 impl Jobs {
+    /// No jobs yet; `installed` from the startup scan.
+    pub fn new(installed: HashSet<&'static str>) -> Self {
+        Self {
+            installed,
+            ..Self::default()
+        }
+    }
+
     /// A meeting's transcription state; `None` when it is not waiting or running.
     pub fn transcription(&self, id: &str) -> Option<Transcription> {
         if let Some((rid, w)) = &self.running
@@ -238,7 +246,9 @@ impl Workspace {
                 cancel,
             )
             .map_err(|e| e.to_string())?;
-            let mut store = store.lock().map_err(|_| "the index is unavailable".to_owned())?;
+            let mut store = store
+                .lock()
+                .map_err(|_| "the index is unavailable".to_owned())?;
             store
                 .add_segments(&meeting_id, &segments)
                 .and_then(|()| store.set_status(&meeting_id, MeetingStatus::Ready))
@@ -261,9 +271,7 @@ impl Workspace {
         let dir = self.paths.models_dir();
         let need_vad = !self.jobs.installed.contains(VAD_MODEL.id);
         let worker = Worker::spawn("download", move |progress, cancel| {
-            if need_vad
-                && let Err(e) = models::download(&VAD_MODEL, &dir, &mut |_, _| {}, cancel)
-            {
+            if need_vad && let Err(e) = models::download(&VAD_MODEL, &dir, &mut |_, _| {}, cancel) {
                 // Transcription still works without it, finding speech by level.
                 tracing::warn!("could not download the VAD model: {e}");
             }
@@ -553,12 +561,11 @@ impl Workspace {
                         )
                         .child(div().text_size(ts::BODY).text_color(p.fg3).child(m.note)),
                 )
-                .child(
-                    div()
-                        .w(rpx(70.))
-                        .flex_none()
-                        .child(ui::mono(format!("{} MB", m.size_mb), ts::SMALL, p.fg2)),
-                )
+                .child(div().w(rpx(70.)).flex_none().child(ui::mono(
+                    format!("{} MB", m.size_mb),
+                    ts::SMALL,
+                    p.fg2,
+                )))
                 .child(
                     div()
                         .w(rpx(190.))
@@ -652,7 +659,10 @@ mod tests {
         jobs.installed.insert("small");
         assert_eq!(jobs.transcription("a"), Some(Transcription::Queued));
         jobs.failed.insert("b".into(), "bad".into());
-        assert_eq!(jobs.transcription("b"), Some(Transcription::Failed("bad".into())));
+        assert_eq!(
+            jobs.transcription("b"),
+            Some(Transcription::Failed("bad".into()))
+        );
         assert_eq!(jobs.transcription("c"), None);
     }
 
