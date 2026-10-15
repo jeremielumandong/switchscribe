@@ -5,8 +5,10 @@ use gpui_kit::{App, KeyBinding, actions};
 actions!(
     switchscribe,
     [
-        /// Start or stop recording (M1).
+        /// Start or stop recording.
         ToggleRecording,
+        /// Bookmark the current moment of the recording.
+        Bookmark,
         /// Show or hide the Ask panel.
         ToggleAsk,
         /// Show or hide the meetings sidebar.
@@ -22,6 +24,7 @@ actions!(
 pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("ctrl-shift-r", ToggleRecording, None),
+        KeyBinding::new("ctrl-shift-b", Bookmark, None),
         KeyBinding::new("ctrl-j", ToggleAsk, None),
         KeyBinding::new("ctrl-b", ToggleSidebar, None),
         KeyBinding::new("ctrl-shift-f", SearchAll, None),

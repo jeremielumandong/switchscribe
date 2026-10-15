@@ -8,10 +8,16 @@ extern crate gpui_kit as gpui;
 mod actions;
 mod appearance;
 mod ask_panel;
+mod assets;
 mod demo;
 mod format;
+mod live_view;
 mod meeting_view;
+mod mini_recorder;
+mod recording;
 mod theme;
+#[cfg(windows)]
+mod tray;
 mod ui;
 mod workspace;
 
@@ -21,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context as _, Result};
 use gpui_kit::component::TitleBar;
 use gpui_kit::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
-use switchscribe_store::{Paths, Settings, Store};
+use switchscribe_store::{MeetingStatus, Paths, Settings, Store};
 use tracing_subscriber::EnvFilter;
 
 use crate::workspace::{Startup, Workspace};
@@ -62,8 +68,17 @@ fn startup(demo: bool) -> Result<Startup> {
             }
         }
     };
+    // A recording cut off by a crash or power loss keeps what reached the disk; queue it
+    // for processing like any other.
+    for m in store.meetings()? {
+        if m.status == MeetingStatus::Recording {
+            tracing::warn!(id = %m.id, "recording was interrupted");
+            store.set_status(&m.id, MeetingStatus::Processing)?;
+        }
+    }
     let meetings = store.meetings()?;
     let people = store.people()?;
+    let devices = switchscribe_capture::input_devices();
     tracing::info!(
         data = %paths.data.display(),
         meetings = meetings.len(),
@@ -78,6 +93,7 @@ fn startup(demo: bool) -> Result<Startup> {
         people,
         demo,
         store_error,
+        devices,
     })
 }
 
@@ -97,7 +113,7 @@ fn main() -> Result<()> {
     let zoom = appearance::zoom();
 
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(assets::AppAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
             load_fonts(cx);
