@@ -129,6 +129,29 @@ impl Vad for SileroVad {
     }
 }
 
+/// Transcribe the meeting in `dir` with a Whisper model, finding speech with Silero when
+/// `vad_model` loads and by level otherwise. See [`crate::transcribe_meeting`].
+pub fn transcribe_with_whisper(
+    dir: &Path,
+    model: &Path,
+    vad_model: Option<&Path>,
+    use_gpu: bool,
+    input: &crate::JobInput,
+    progress: &mut dyn FnMut(f32),
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<switchscribe_store::NewSegment>> {
+    let engine = WhisperEngine::load(model, use_gpu)?;
+    let mut vad: Box<dyn Vad> = match vad_model.map(SileroVad::load) {
+        Some(Ok(v)) => Box::new(v),
+        Some(Err(e)) => {
+            tracing::warn!("Silero VAD unavailable, finding speech by level: {e}");
+            Box::new(crate::EnergyVad::default())
+        }
+        None => Box::new(crate::EnergyVad::default()),
+    };
+    crate::transcribe_meeting(dir, &engine, vad.as_mut(), input, progress, cancel)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +167,9 @@ mod tests {
     #[test]
     fn missing_models_fail_cleanly() {
         let missing = Path::new("/nonexistent/ggml-none.bin");
-        assert!(matches!(WhisperEngine::load(missing, false), Err(Error::Model(_))));
+        assert!(matches!(
+            WhisperEngine::load(missing, false),
+            Err(Error::Model(_))
+        ));
     }
 }

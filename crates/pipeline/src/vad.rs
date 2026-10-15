@@ -3,8 +3,7 @@
 
 use std::ops::Range;
 
-use crate::Result;
-use crate::resample::RATE;
+use crate::{RATE, Result};
 
 /// Finds speech in a 16 kHz track.
 pub trait Vad: Send {
@@ -158,7 +157,12 @@ mod tests {
 
     #[test]
     fn silence_has_no_speech() {
-        assert!(EnergyVad::default().detect(&vec![0.0; 16_000]).unwrap().is_empty());
+        assert!(
+            EnergyVad::default()
+                .detect(&vec![0.0; 16_000])
+                .unwrap()
+                .is_empty()
+        );
         assert!(EnergyVad::default().detect(&[]).unwrap().is_empty());
     }
 

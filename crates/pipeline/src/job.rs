@@ -8,9 +8,8 @@ use serde::{Deserialize, Serialize};
 use switchscribe_capture::{Recording, Track};
 use switchscribe_store::NewSegment;
 
-use crate::resample::{RATE, to_16k};
 use crate::vad::{Vad, chunks};
-use crate::{Error, Options, Result, SpeechEngine, merge_tracks};
+use crate::{Error, Options, RATE, Result, SpeechEngine, merge_tracks};
 
 /// Chunks sent to the model are at most this long (Whisper's window).
 const MAX_CHUNK_SECS: usize = 28;
@@ -91,8 +90,9 @@ pub fn transcribe_meeting(
     // Decode and find speech first, so progress can be weighted by speech length.
     let mut work = Vec::new();
     for track in tracks {
-        let samples = switchscribe_capture::ogg_opus::decode_file(&dir.join(track.file_name()))?;
-        let audio = to_16k(&samples);
+        // Opus decodes straight to 16 kHz, so a long meeting never sits in memory at 48.
+        let audio =
+            switchscribe_capture::ogg_opus::decode_file_at(&dir.join(track.file_name()), RATE)?;
         let speech = vad.detect(&audio)?;
         let pieces = chunks(
             &speech,
@@ -231,7 +231,11 @@ mod tests {
         assert_eq!(segs[0].speaker_label, "You");
         assert!(segs[0].start_ms < 500);
         assert_eq!(segs[1].speaker_label, "Teams");
-        assert!((3500..4500).contains(&segs[1].start_ms), "{}", segs[1].start_ms);
+        assert!(
+            (3500..4500).contains(&segs[1].start_ms),
+            "{}",
+            segs[1].start_ms
+        );
         // The language found on the first chunk is reused.
         let calls = engine.calls.lock().unwrap();
         assert_eq!(calls[1].1.as_deref(), Some("en"));

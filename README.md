@@ -8,9 +8,11 @@ items that your coding CLI (Claude Code, Codex, Gemini CLI) can query. It is a s
 [switchhead](https://github.com/jeremielumandong/switchhead) and Switchyard and shares
 their GPUI stack and design system.
 
-> Early development. **M0 (skeleton)** and **M1 (capture)** are in: the app shell, the
-> SQLite store, and recording Teams plus your mic to two Opus tracks with a live view,
-> a floating mini recorder and a tray icon. Transcription arrives in M2. See
+> Early development. **M0 (skeleton)**, **M1 (capture)** and **M2 (transcription)** are
+> in: the app shell, the SQLite store, recording Teams plus your mic to two Opus tracks
+> with a live view, a floating mini recorder and a tray icon, on-device Whisper
+> transcription after the call, and an audio player synced to the transcript. Speaker
+> naming arrives in M3. See
 > [`PLAN.md`](PLAN.md) and the full [build plan](docs/BUILD-PLAN.md).
 
 ![The demo data: a meeting's summary with the Ask panel open](docs/screenshots/demo-summary.png)
@@ -24,8 +26,12 @@ cargo run -p switchscribe-app             # binary: `switchscribe`
 cargo run -p switchscribe-app -- --demo   # the prototype's meetings, in memory only
 ```
 
-Building needs CMake (libopus is compiled from source). Linux needs `libxkbcommon-dev`, `libxkbcommon-x11-dev`, `libwayland-dev`, `libxcb1-dev`,
-`libvulkan-dev` and `libfontconfig-dev` to build.
+Building needs CMake and a C++ compiler (libopus and whisper.cpp are compiled from
+source). Linux needs `libxkbcommon-dev`, `libxkbcommon-x11-dev`, `libwayland-dev`,
+`libxcb1-dev`, `libvulkan-dev`, `libfontconfig-dev` and `libasound2-dev` to build.
+
+Transcription runs on this machine with a Whisper model you download from Settings →
+Models (Small is a good start on a laptop; the quantized Large v3 Turbo with a GPU).
 
 | Variable | Effect |
 | --- | --- |

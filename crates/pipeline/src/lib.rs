@@ -6,7 +6,6 @@
 
 pub mod job;
 pub mod models;
-pub mod resample;
 pub mod vad;
 #[cfg(feature = "whisper")]
 pub mod whisper;
@@ -17,6 +16,9 @@ use switchscribe_store::NewSegment;
 
 pub use job::{JobInput, TranscriptFile, transcribe_meeting};
 pub use vad::{EnergyVad, Vad};
+
+/// Sample rate the speech models take.
+pub const RATE: u32 = 16_000;
 
 /// The pipeline's steps, as the meeting view's processing stepper shows them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

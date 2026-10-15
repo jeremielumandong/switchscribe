@@ -37,6 +37,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 # Audio: Opus in Ogg for the two tracks (libopus is built from source by opusic-sys, so
 # CMake is needed at build time); WASAPI for capture and sysinfo to find Teams on Windows.
 opus = "0.4"
+cpal = "0.18"
 ogg = "0.9"
 wasapi = "0.26"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }

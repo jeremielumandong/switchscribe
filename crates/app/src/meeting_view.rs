@@ -1,6 +1,6 @@
-//! A meeting after the call: header, the processing stepper, and the Summary,
-//! Transcript, Action items and Notes tabs. The transcript is real (from the store); the
-//! summary, action items and notes are demo content until M4 produces them.
+//! A meeting after the call: header, the processing stepper, the Summary, Transcript,
+//! Action items and Notes tabs, and the audio player. The transcript is real (from the
+//! store); the summary and action items are demo content until M4 produces them.
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -13,6 +13,8 @@ use switchscribe_store::{Meeting, MeetingStatus, Segment};
 use crate::appearance::{rpx, ts};
 use crate::demo;
 use crate::format;
+use crate::player_bar;
+use crate::processing::Transcription;
 use crate::recording::{self, NotesDoc};
 use crate::theme::{MONO, Palette};
 use crate::ui::{self, Kind};
@@ -25,6 +27,14 @@ pub fn render(ws: &Workspace, m: &Meeting, p: &Palette, cx: &mut Context<Workspa
         Some((id, segs)) if *id == m.id => segs,
         _ => &[],
     };
+    let transcribing = ws.jobs.transcription(&m.id);
+    // The transcript's lines sit directly in the scroll container, so playback can
+    // scroll to one.
+    let rows: Vec<AnyElement> = if ws.tab == Tab::Transcript && !transcript.is_empty() {
+        transcript_rows(ws, transcript, p, cx)
+    } else {
+        Vec::new()
+    };
     let body: AnyElement = match ws.tab {
         Tab::Summary if featured => summary(p, cx),
         Tab::Summary => pending(
@@ -32,12 +42,18 @@ pub fn render(ws: &Workspace, m: &Meeting, p: &Palette, cx: &mut Context<Workspa
             "After each call the coding CLI writes the summary, decisions, action items and open questions, each linked to its moment (M4).",
             p,
         ),
-        Tab::Transcript if transcript.is_empty() => pending(
-            "No transcript yet",
-            "Each track is transcribed on this machine after the call (M2).",
-            p,
-        ),
-        Tab::Transcript => transcript_rows(ws, transcript, p, cx),
+        Tab::Transcript if transcript.is_empty() => {
+            let body = match &transcribing {
+                Some(Transcription::NeedsModel) => {
+                    "Download a transcription model in Settings and this meeting is transcribed on this machine.".to_owned()
+                }
+                Some(Transcription::Failed(e)) => format!("Transcription failed: {e}"),
+                Some(_) => "Transcribing on this machine. The transcript appears here when it is done.".to_owned(),
+                None => "Each track is transcribed on this machine after the call.".to_owned(),
+            };
+            ui::empty_state("No transcript yet", body, p).into_any_element()
+        }
+        Tab::Transcript => div().into_any_element(),
         Tab::Actions if featured => actions(p, cx),
         Tab::Actions => pending(
             "No action items yet",
@@ -55,22 +71,32 @@ pub fn render(ws: &Workspace, m: &Meeting, p: &Palette, cx: &mut Context<Workspa
         },
     };
     let action_count = if featured { demo::actions().len() } else { 0 };
+    let player = ws
+        .playback
+        .as_ref()
+        .filter(|pb| pb.meeting_id == m.id)
+        .map(|pb| player_bar::render(ws, pb, p, cx));
     div()
         .flex_1()
         .min_h_0()
         .flex()
         .flex_col()
-        .child(header(ws, m, transcript.len(), action_count, p, cx))
+        .child(header(ws, m, transcript.len(), action_count, transcribing, p, cx))
         .child(
             div()
                 .id("meeting-body")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
+                .track_scroll(&ws.body_scroll)
                 .flex()
                 .flex_col()
-                .child(body),
+                .when(rows.is_empty(), |d| d.child(body))
+                .when(!rows.is_empty(), |d| {
+                    d.px(rpx(12.)).pt(rpx(8.)).pb(rpx(20.)).children(rows)
+                }),
         )
+        .children(player)
         .into_any_element()
 }
 
@@ -79,6 +105,7 @@ fn header(
     m: &Meeting,
     segments: usize,
     action_count: usize,
+    transcribing: Option<Transcription>,
     p: &Palette,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
@@ -195,7 +222,7 @@ fn header(
                 .child(buttons),
         )
         .when(m.status == MeetingStatus::Processing, |d| {
-            d.child(stepper(ws.demo && m.id == demo::FEATURED, p))
+            d.child(stepper(ws.demo && m.id == demo::FEATURED, transcribing, p))
         })
         .child(tabs)
         .into_any_element()
@@ -206,17 +233,29 @@ fn count(n: usize) -> String {
 }
 
 /// Capture → Transcribe → Identify speakers → Summarize. The demo shows the prototype's
-/// progress; a real recording has finished capturing and waits for the pipeline (M2).
-fn stepper(featured: bool, p: &Palette) -> AnyElement {
-    let progress = if featured {
+/// progress; a real recording shows its transcription (speakers arrive in M3, summaries
+/// in M4).
+fn stepper(featured: bool, transcribing: Option<Transcription>, p: &Palette) -> AnyElement {
+    let progress: [(f32, String); 4] = if featured {
         [
-            (1.0, "done"),
-            (0.64, "~1m 40s"),
-            (0.0, "~30s"),
-            (0.0, "~45s"),
+            (1.0, "done".into()),
+            (0.64, "~1m 40s".into()),
+            (0.0, "~30s".into()),
+            (0.0, "~45s".into()),
         ]
     } else {
-        [(1.0, "done"), (0.0, "queued"), (0.0, ""), (0.0, "")]
+        let transcribe = match transcribing {
+            Some(Transcription::Running(f)) => (f.max(0.01), format!("{:.0}%", f * 100.0)),
+            Some(Transcription::Queued) | None => (0.0, "queued".into()),
+            Some(Transcription::NeedsModel) => (0.0, "needs a model".into()),
+            Some(Transcription::Failed(_)) => (0.0, "failed".into()),
+        };
+        [
+            (1.0, "done".into()),
+            transcribe,
+            (0.0, String::new()),
+            (0.0, String::new()),
+        ]
     };
     div()
         .mt(rpx(14.))
@@ -338,18 +377,12 @@ fn transcript_rows(
     segments: &[Segment],
     p: &Palette,
     cx: &mut Context<Workspace>,
-) -> AnyElement {
-    let active = segments
+) -> Vec<AnyElement> {
+    let active = player_bar::active_segment(segments, ws.playhead).unwrap_or(0);
+    segments
         .iter()
-        .rposition(|s| s.start_ms <= ws.playhead * 1000)
-        .unwrap_or(0);
-    div()
-        .px(rpx(12.))
-        .pt(rpx(8.))
-        .pb(rpx(20.))
-        .flex()
-        .flex_col()
-        .children(segments.iter().enumerate().map(|(i, s)| {
+        .enumerate()
+        .map(|(i, s)| {
             let person = s.person_id.and_then(|id| ws.person(id));
             let (name, color, named): (SharedString, _, bool) = match person {
                 Some(person) => (person.name.clone().into(), p.speaker(person.color), true),
@@ -427,21 +460,45 @@ fn transcript_rows(
                         .child(s.text.clone()),
                 )
                 .when(on, |d| {
-                    d.child(div().flex().flex_none().gap(px(2.)).children(
-                        ["Play", "Copy", "Edit", "Relabel"].map(|label| {
-                            div()
-                                .px(rpx(6.))
-                                .py(px(2.))
-                                .rounded(px(4.))
-                                .bg(p.raised)
-                                .text_size(ts::SMALL)
-                                .text_color(p.fg_ctl)
-                                .child(label)
-                        }),
-                    ))
+                    d.child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .gap(px(2.))
+                            .child(
+                                seg_tool("seg-play", "Play", p)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.play_from(at, cx)
+                                    })),
+                            )
+                            .children(
+                                ["Copy", "Edit", "Relabel"]
+                                    .map(|label| seg_tool(label, label, p).opacity(0.6)),
+                            ),
+                    )
                 })
-        }))
-        .into_any_element()
+                .into_any_element()
+        })
+        .collect()
+}
+
+/// A small tool chip on the active transcript line.
+fn seg_tool(
+    id: &'static str,
+    label: &'static str,
+    p: &Palette,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    div()
+        .id(id)
+        .px(rpx(6.))
+        .py(px(2.))
+        .rounded(px(4.))
+        .bg(p.raised)
+        .text_size(ts::SMALL)
+        .text_color(p.fg_ctl)
+        .child(label)
 }
 
 /// The low-confidence badge's ring (#4a4d55).

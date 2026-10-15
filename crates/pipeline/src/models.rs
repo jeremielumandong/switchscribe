@@ -221,7 +221,10 @@ mod tests {
         let hex = "a".repeat(64);
         assert_eq!(parse_etag(&format!("\"{hex}\"")), Some(hex.clone()));
         assert_eq!(parse_etag("\"abc\""), None);
-        assert_eq!(parse_etag(&format!("W/\"{}\"", hex.to_uppercase())), Some(hex));
+        assert_eq!(
+            parse_etag(&format!("W/\"{}\"", hex.to_uppercase())),
+            Some(hex)
+        );
     }
 
     #[test]
