@@ -16,6 +16,7 @@ use crate::format;
 use crate::player_bar;
 use crate::processing::Transcription;
 use crate::recording::{self, NotesDoc};
+use crate::speakers;
 use crate::theme::{MONO, Palette};
 use crate::ui::{self, Kind};
 use crate::workspace::{Tab, Workspace};
@@ -31,7 +32,12 @@ pub fn render(ws: &Workspace, m: &Meeting, p: &Palette, cx: &mut Context<Workspa
     // The transcript's lines sit directly in the scroll container, so playback can
     // scroll to one.
     let rows: Vec<AnyElement> = if ws.tab == Tab::Transcript && !transcript.is_empty() {
-        transcript_rows(ws, transcript, p, cx)
+        // The Name-a-speaker card comes first (see `scroll_to_playhead`).
+        ws.naming_cluster()
+            .map(|c| speakers::name_card(ws, c, transcript, p, cx))
+            .into_iter()
+            .chain(transcript_rows(ws, transcript, p, cx))
+            .collect()
     } else {
         Vec::new()
     };
@@ -241,8 +247,8 @@ fn count(n: usize) -> String {
 }
 
 /// Capture → Transcribe → Identify speakers → Summarize. The demo shows the prototype's
-/// progress; a real recording shows its transcription (speakers arrive in M3, summaries
-/// in M4).
+/// progress; a real recording shows transcription and speaker identification
+/// (summaries arrive in M4).
 fn stepper(featured: bool, transcribing: Option<Transcription>, p: &Palette) -> AnyElement {
     let progress: [(f32, String); 4] = if featured {
         [
@@ -252,16 +258,20 @@ fn stepper(featured: bool, transcribing: Option<Transcription>, p: &Palette) -> 
             (0.0, "~45s".into()),
         ]
     } else {
-        let transcribe = match transcribing {
-            Some(Transcription::Running(f)) => (f.max(0.01), format!("{:.0}%", f * 100.0)),
-            Some(Transcription::Queued) | None => (0.0, "queued".into()),
-            Some(Transcription::NeedsModel) => (0.0, "needs a model".into()),
-            Some(Transcription::Failed(_)) => (0.0, "failed".into()),
+        let pct = |f: f32| (f.max(0.01), format!("{:.0}%", f * 100.0));
+        let (transcribe, identify) = match transcribing {
+            Some(Transcription::Running(f)) => (pct(f), (0.0, String::new())),
+            Some(Transcription::Identifying(f)) => ((1.0, "done".into()), pct(f)),
+            Some(Transcription::Queued) | None => ((0.0, "queued".into()), (0.0, String::new())),
+            Some(Transcription::NeedsModel) => {
+                ((0.0, "needs a model".into()), (0.0, String::new()))
+            }
+            Some(Transcription::Failed(_)) => ((0.0, "failed".into()), (0.0, String::new())),
         };
         [
             (1.0, "done".into()),
             transcribe,
-            (0.0, String::new()),
+            identify,
             (0.0, String::new()),
         ]
     };
@@ -397,6 +407,7 @@ fn transcript_rows(
                 None => (s.speaker_label.clone().into(), p.unknown, false),
             };
             let on = i == active;
+            let relabel = on && ws.can_relabel(&s.speaker_label);
             let at = s.start_ms / 1000;
             div()
                 .id(("seg", i))
@@ -480,9 +491,20 @@ fn transcript_rows(
                                 }),
                             ))
                             .children(
-                                ["Copy", "Edit", "Relabel"]
+                                ["Copy", "Edit"]
                                     .map(|label| seg_tool(label, label, p).opacity(0.6)),
-                            ),
+                            )
+                            .when(relabel, |d| {
+                                let label = s.speaker_label.clone();
+                                d.child(
+                                    seg_tool("seg-relabel", "Relabel", p)
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.relabel(label.clone(), cx)
+                                        })),
+                                )
+                            }),
                     )
                 })
                 .into_any_element()

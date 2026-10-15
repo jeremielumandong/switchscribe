@@ -8,11 +8,12 @@ items that your coding CLI (Claude Code, Codex, Gemini CLI) can query. It is a s
 [switchhead](https://github.com/jeremielumandong/switchhead) and Switchyard and shares
 their GPUI stack and design system.
 
-> Early development. **M0 (skeleton)**, **M1 (capture)** and **M2 (transcription)** are
-> in: the app shell, the SQLite store, recording Teams plus your mic to two Opus tracks
-> with a live view, a floating mini recorder and a tray icon, on-device Whisper
-> transcription after the call, and an audio player synced to the transcript. Speaker
-> naming arrives in M3. See
+> Early development. **M0 (skeleton)**, **M1 (capture)**, **M2 (transcription)** and
+> **M3 (speakers)** are in: the app shell, the SQLite store, recording Teams plus your
+> mic to two Opus tracks with a live view, a floating mini recorder and a tray icon,
+> on-device Whisper transcription after the call, an audio player synced to the
+> transcript, and speaker identification with a voiceprint library. Summaries arrive
+> in M4. See
 > [`PLAN.md`](PLAN.md) and the full [build plan](docs/BUILD-PLAN.md).
 
 ![The demo data: a meeting's summary with the Ask panel open](docs/screenshots/demo-summary.png)
@@ -20,6 +21,8 @@ their GPUI stack and design system.
 ![Recording: the live view, notes and the mini recorder](docs/screenshots/recording-live.png)
 
 ![A transcript following playback at 2×](docs/screenshots/transcript-player.png)
+
+![Naming a speaker: clips, voice-matched suggestions and a name field](docs/screenshots/name-speaker.png)
 
 ## Run it
 
@@ -34,6 +37,9 @@ source). Linux needs `libxkbcommon-dev`, `libxkbcommon-x11-dev`, `libwayland-dev
 
 Transcription runs on this machine with a Whisper model you download from Settings →
 Models (Small is a good start on a laptop; the quantized Large v3 Turbo with a GPU).
+Speaker identification needs the 47 MB speaker models, fetched with the first
+transcription model. The sherpa-onnx and onnxruntime shared libraries the build
+downloads must stay next to the executable.
 
 | Variable | Effect |
 | --- | --- |
@@ -61,8 +67,9 @@ docs/            build plan, decisions, the UI prototype
 ## Your data
 
 Everything stays on your machine: one folder per meeting under the data folder's
-`meetings/` (`mic.opus`, `remote.opus`, `capture.json`, `notes.md`), a SQLite index
-(`switchscribe.db`) and `settings.json`. The only thing that
+`meetings/` (`mic.opus`, `remote.opus`, `capture.json`, `notes.md`, `transcript.json`,
+`speakers.json`), a SQLite index (`switchscribe.db`, with voiceprints sealed by Windows
+DPAPI) and `settings.json`. The only thing that
 ever leaves is transcript text you send to your chosen CLI's model for summaries.
 
 ## License

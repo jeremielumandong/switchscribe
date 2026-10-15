@@ -6713,6 +6713,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "gpui-kit",
+ "serde_json",
  "switchscribe-agent",
  "switchscribe-capture",
  "switchscribe-integrations",

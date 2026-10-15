@@ -56,6 +56,30 @@ pub fn date_long(m: &Meeting) -> String {
     )
 }
 
+/// A day for the People screen: `Today`, `Yesterday`, the weekday this week, else the
+/// date (`Oct 2`).
+pub fn day(secs: i64, today: NaiveDate) -> String {
+    let t = chrono::DateTime::from_timestamp(secs, 0)
+        .unwrap_or_default()
+        .with_timezone(&Local);
+    match DateGroup::of(t.date_naive(), today) {
+        DateGroup::Today => "Today".to_owned(),
+        DateGroup::Yesterday => "Yesterday".to_owned(),
+        DateGroup::ThisWeek => weekday(t.weekday()).to_owned(),
+        DateGroup::Older => format!("{} {}", month(t.month()), t.day()),
+    }
+}
+
+/// A clip length: `6s`, `1m 4s`.
+pub fn seconds(ms: i64) -> String {
+    let s = (ms.max(0) + 500) / 1000;
+    if s < 60 {
+        format!("{s}s")
+    } else {
+        format!("{}m {}s", s / 60, s % 60)
+    }
+}
+
 fn weekday(d: chrono::Weekday) -> &'static str {
     ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][d.num_days_from_monday() as usize]
 }
@@ -86,5 +110,13 @@ mod tests {
         assert_eq!(duration_short(2832), "47m");
         assert_eq!(duration_short(3600), "1h");
         assert_eq!(duration_short(4844), "1h 20m");
+    }
+
+    #[test]
+    fn seconds_and_days() {
+        assert_eq!(seconds(5_600), "6s");
+        assert_eq!(seconds(252_000), "4m 12s");
+        let today = Local::now().date_naive();
+        assert_eq!(day(Local::now().timestamp(), today), "Today");
     }
 }

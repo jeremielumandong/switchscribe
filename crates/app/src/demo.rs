@@ -4,7 +4,8 @@
 //! the user's data folder.
 
 use chrono::{Days, Local, NaiveDate, NaiveTime, TimeZone as _};
-use switchscribe_store::{MeetingStatus, NewMeeting, NewSegment, Store};
+use switchscribe_pipeline::identify::{Cluster, SpeakersFile};
+use switchscribe_store::{MeetingStatus, NewMeeting, NewSegment, Store, StoredVoiceprint};
 
 /// Whether this run shows the demo data.
 pub fn requested(args: &[String]) -> bool {
@@ -266,7 +267,62 @@ pub fn store(today: NaiveDate) -> switchscribe_store::Result<Store> {
         })
         .collect();
     store.add_segments(FEATURED, &segments)?;
+    // Everyone but the unnamed speaker has a voiceprint: one axis each.
+    for (i, id) in ids.iter().enumerate().skip(1) {
+        store.set_voiceprint(&StoredVoiceprint {
+            person_id: *id,
+            embedding: axis(i),
+            samples: [0, 12, 12, 6, 4][i],
+            // Their first line in the featured meeting, if they speak in it.
+            sample: SEGMENTS
+                .iter()
+                .find(|s| s.1 == Some(i))
+                .map(|s| (FEATURED.into(), s.0 * 1000, s.0 * 1000 + 5_000)),
+        })?;
+    }
     Ok(store)
+}
+
+fn axis(i: usize) -> Vec<f32> {
+    let mut v = vec![0.0; PEOPLE.len() + 3];
+    v[i] = 1.0;
+    v
+}
+
+/// The featured meeting's `speakers.json`: Speaker 3 sounds most like Dana (82%), then
+/// Sam (41%) and Priya (12%).
+pub fn speakers() -> SpeakersFile {
+    let mut embedding = vec![0.0; PEOPLE.len() + 3];
+    for (i, w) in [(3, 0.82), (4, 0.41), (1, 0.12)] {
+        embedding[i] = w;
+    }
+    // The rest of the unit vector, on an axis nobody has.
+    embedding[PEOPLE.len() + 2] = (1.0f32 - 0.82 * 0.82 - 0.41 * 0.41 - 0.12 * 0.12).sqrt();
+    let spans: Vec<(i64, i64)> = SEGMENTS
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.1.is_none())
+        .map(|(i, s)| {
+            let end = SEGMENTS.get(i + 1).map_or(2832, |n| n.0).min(s.0 + 60);
+            (s.0 * 1000, end * 1000)
+        })
+        .collect();
+    SpeakersFile {
+        clusters: vec![Cluster {
+            label: "Speaker 3".into(),
+            embedding,
+            speech_ms: spans.iter().map(|(a, b)| b - a).sum(),
+            clips: spans
+                .iter()
+                .take(3)
+                .map(|(a, b)| (*a, (*b).min(a + 6_000)))
+                .collect(),
+            person_id: None,
+            similarity: None,
+            confirmed: false,
+        }],
+        me: None,
+    }
 }
 
 /// The featured meeting's summary.

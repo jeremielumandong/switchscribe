@@ -17,6 +17,7 @@ mod mini_recorder;
 mod player_bar;
 mod processing;
 mod recording;
+mod speakers;
 mod theme;
 #[cfg(windows)]
 mod tray;
@@ -78,8 +79,13 @@ fn startup(demo: bool) -> Result<Startup> {
             store.set_status(&m.id, MeetingStatus::Processing)?;
         }
     }
+    if !demo {
+        speakers::ensure_me(&store)?;
+    }
     let meetings = store.meetings()?;
     let people = store.people()?;
+    let voiceprints = store.voiceprints()?;
+    let people_stats = store.people_stats()?;
     let devices = switchscribe_capture::input_devices();
     let installed_models = processing::scan_models(&paths.models_dir());
     tracing::info!(
@@ -98,6 +104,8 @@ fn startup(demo: bool) -> Result<Startup> {
         store_error,
         devices,
         installed_models,
+        voiceprints,
+        people_stats,
     })
 }
 
