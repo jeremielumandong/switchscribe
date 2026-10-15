@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;background:#0d0e10;color:#e4e5e8;font-family:'IBM Plex Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:oklch(0.8 0.1 195);text-decoration:none}
+a:hover{color:oklch(0.88 0.1 195);text-decoration:underline}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#2a2c31;border-radius:4px}::-webkit-scrollbar-track{background:transparent}
+input,textarea,select,button{font-family:inherit}
+@keyframes ssPulse{0%{box-shadow:0 0 0 0 oklch(0.63 0.21 25 / .7)}70%{box-shadow:0 0 0 7px oklch(0.63 0.21 25 / 0)}100%{box-shadow:0 0 0 0 oklch(0.63 0.21 25 / 0)}}
+</style>
+</helmet>
+<div style="height:100vh;width:100%;overflow:auto;background:#0d0e10"><div style="height:100%;min-height:600px;min-width:960px;display:flex;flex-direction:column;background:#0d0e10;font-size:13px;position:relative;overflow:hidden">
+
+  <!-- Title bar -->
+  <div style="height:44px;flex:none;display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid #222429;background:#111215">
+    <div style="display:flex;align-items:center;gap:8px;width:236px">
+      <div style="width:14px;height:14px;border-radius:3px;background:#e4e5e8"></div>
+      <span style="font-weight:600;letter-spacing:-0.01em">switchscribe</span>
+    </div>
+    <div onClick="{{ goSearch }}" style="flex:1;max-width:520px;height:28px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid #26282d;border-radius:6px;background:#0d0e10;color:#6f737c;cursor:text">
+      <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Search all meetings</span>
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a5e66;white-space:nowrap">Ctrl+Shift+F</span>
+    </div>
+    <div style="flex:1"></div>
+    <sc-if value="{{ notRecording }}" hint-placeholder-val="{{ true }}">
+      <button onClick="{{ startRecording }}" style="height:28px;display:flex;align-items:center;gap:8px;padding:0 12px;border-radius:6px;border:1px solid #2e3036;background:#1a1b1f;color:#e4e5e8;font-size:12px;font-weight:500;cursor:pointer" style-hover="background:#212227">
+        <span style="width:8px;height:8px;border-radius:50%;border:1.5px solid #9a9ea6"></span>Record<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a5e66">Ctrl+Shift+R</span>
+      </button>
+    </sc-if>
+    <sc-if value="{{ recording }}" hint-placeholder-val="{{ false }}">
+      <button onClick="{{ goLive }}" style="height:28px;display:flex;align-items:center;gap:8px;padding:0 12px;border-radius:6px;border:1px solid oklch(0.63 0.21 25);background:oklch(0.63 0.21 25 / .16);color:#ffd9d4;font-size:12px;font-weight:500;cursor:pointer">
+        {{ pulseDot }}<span style="font-family:'IBM Plex Mono',monospace">{{ elapsedLabel }}</span>
+      </button>
+    </sc-if>
+    <div style="height:28px;display:flex;align-items:center;gap:6px;padding:0 10px;border:1px solid #26282d;border-radius:6px;color:#b9bcc3;font-size:12px">
+      <span style="width:6px;height:6px;border-radius:50%;background:oklch(0.74 0.13 150)"></span>Claude Code<span style="color:#5a5e66">▾</span>
+    </div>
+    <button onClick="{{ toggleAsk }}" style="height:28px;padding:0 10px;border-radius:6px;border:1px solid #26282d;background:{{ askBtnBg }};color:#b9bcc3;font-size:12px;cursor:pointer">Ask <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a5e66">Ctrl+J</span></button>
+    <div title="Settings" style="width:28px;height:28px;display:grid;place-items:center;border:1px solid #26282d;border-radius:6px;color:#8b8f98;cursor:pointer">⚙</div>
+  </div>
+
+  <div style="flex:1;display:flex;min-height:0">
+
+    <!-- Sidebar -->
+    <div style="width:260px;flex:none;display:flex;flex-direction:column;border-right:1px solid #222429;background:#111215;min-height:0">
+      <div style="padding:12px 12px 6px;display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#6f737c">Meetings</span>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a5e66">{{ meetingCount }}</span>
+      </div>
+      <div style="flex:1;overflow-y:auto;overflow-x:hidden;padding:0 6px 8px">
+        <sc-for list="{{ groups }}" as="group" hint-placeholder-count="3">
+          <div style="padding:10px 8px 4px;font-size:11px;color:#5a5e66">{{ group.label }}</div>
+          <sc-for list="{{ group.items }}" as="m" hint-placeholder-count="2">
+            <div onClick="{{ m.onClick }}" style="padding:8px;border-radius:6px;cursor:pointer;display:flex;flex-direction:column;gap:5px;background:{{ m.bg }}" style-hover="background:#1a1b1f">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="flex:1;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ m.title }}</span>
+                <sc-if value="{{ m.isRec }}" hint-placeholder-val="{{ false }}"><span style="width:7px;height:7px;border-radius:50%;background:oklch(0.63 0.21 25)"></span></sc-if>
+                <sc-if value="{{ m.isProc }}" hint-placeholder-val="{{ false }}"><span style="width:9px;height:9px;border-radius:50%;border:1.5px solid #8b8f98;border-top-color:transparent"></span></sc-if>
+                <sc-if value="{{ m.isLabels }}" hint-placeholder-val="{{ false }}"><span style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:0 4px;border-radius:3px;border:1px dashed #6f737c;color:#b9bcc3">?</span></sc-if>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;color:#6f737c;font-size:11px">
+                <span style="font-family:'IBM Plex Mono',monospace">{{ m.time }}</span><span style="font-family:'IBM Plex Mono',monospace">{{ m.dur }}</span>
+                <span style="flex:1"></span>
+                <div style="display:flex">
+                  <sc-for list="{{ m.att }}" as="a" hint-placeholder-count="3">
+                    <span style="width:16px;height:16px;margin-left:-4px;border-radius:50%;background:#1a1b1f;border:1.5px solid {{ a.color }};display:grid;place-items:center;font-size:7px;font-weight:600;color:#c9ccd2">{{ a.initials }}</span>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </sc-for>
+      </div>
+      <div style="border-top:1px solid #222429;padding:6px;display:flex;flex-direction:column;gap:1px">
+        <sc-for list="{{ nav }}" as="n" hint-placeholder-count="3">
+          <div onClick="{{ n.onClick }}" style="height:30px;display:flex;align-items:center;gap:8px;padding:0 8px;border-radius:6px;cursor:pointer;color:{{ n.color }};background:{{ n.bg }}" style-hover="background:#1a1b1f">
+            <span style="flex:1">{{ n.label }}</span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a5e66">{{ n.meta }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- Main -->
+    <div style="flex:1;min-width:480px;display:flex;flex-direction:column;background:#0d0e10">
+      <sc-if value="{{ showError }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 16px;background:oklch(0.78 0.14 75 / .1);border-bottom:1px solid oklch(0.78 0.14 75 / .35);color:oklch(0.86 0.12 80)">
+          <span style="width:16px;height:16px;border-radius:3px;background:oklch(0.78 0.14 75);color:#1a1405;display:grid;place-items:center;font-weight:700;font-size:11px">!</span>
+          <span style="flex:1">{{ errorMsg }}</span>
+          <span style="font-size:12px;text-decoration:underline;cursor:pointer">{{ errorAction }}</span>
+        </div>
+      </sc-if>
+
+      <!-- MEETING DETAIL -->
+      <sc-if value="{{ isMeeting }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:none;padding:16px 20px 0;border-bottom:1px solid #222429">
+          <div style="display:flex;align-items:flex-start;gap:12px 16px;flex-wrap:wrap">
+            <div style="flex:1 1 280px;min-width:0">
+              <div style="font-size:20px;font-weight:600;letter-spacing:-0.015em" contenteditable="true">{{ sel.title }}</div>
+              <div style="display:flex;align-items:center;gap:12px;margin-top:6px;color:#8b8f98;font-size:12px">
+                <span>{{ sel.date }}</span><span style="font-family:'IBM Plex Mono',monospace">{{ sel.durLong }}</span><span>Teams</span>
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  <sc-for list="{{ attendees }}" as="a" hint-placeholder-count="4">
+                    <span style="display:flex;align-items:center;gap:5px;padding:1px 7px 1px 2px;border-radius:10px;background:#16171a;border:1px solid #26282d;color:#c9ccd2">
+                      <span style="width:16px;height:16px;border-radius:50%;background:{{ a.color }};color:#0d0e10;display:grid;place-items:center;font-size:7px;font-weight:700">{{ a.initials }}</span>{{ a.name }}
+                    </span>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex:none">
+              <button style="height:28px;padding:0 10px;border-radius:6px;border:1px solid #2e3036;background:#16171a;color:#c9ccd2;font-size:12px;cursor:pointer;white-space:nowrap" style-hover="background:#1f2024">Re-run summary</button>
+              <button style="height:28px;padding:0 10px;border-radius:6px;border:1px solid #2e3036;background:#16171a;color:#c9ccd2;font-size:12px;cursor:pointer" style-hover="background:#1f2024">Send to Jira</button>
+              <button style="height:28px;padding:0 10px;border-radius:6px;border:1px solid #2e3036;background:#e4e5e8;color:#0d0e10;font-size:12px;font-weight:500;cursor:pointer">Export ▾</button>
+            </div>
+          </div>
+          <sc-if value="{{ sel.isProc }}" hint-placeholder-val="{{ false }}">
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:14px">
+              <sc-for list="{{ steps }}" as="s" hint-placeholder-count="4">
+                <div style="padding:10px;border:1px solid #26282d;border-radius:6px;background:#121316;display:flex;flex-direction:column;gap:7px">
+                  <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:{{ s.color }}">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a5e66">{{ s.n }}</span><span style="flex:1;font-weight:500">{{ s.label }}</span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6f737c">{{ s.eta }}</span>
+                  </div>
+                  <div style="height:3px;border-radius:2px;background:#222429;overflow:hidden"><div style="height:100%;width:{{ s.pct }};background:{{ s.bar }}"></div></div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <div style="display:flex;gap:2px;margin-top:14px">
+            <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+              <div onClick="{{ t.onClick }}" style="padding:8px 12px;cursor:pointer;font-weight:500;color:{{ t.color }};border-bottom:2px solid {{ t.border }};display:flex;gap:6px;align-items:center">{{ t.label }}<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a5e66">{{ t.count }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="flex:1;overflow:auto;min-height:0">
+          <!-- Summary tab -->
+          <sc-if value="{{ tabSummary }}" hint-placeholder-val="{{ true }}">
+            <div style="max-width:760px;padding:20px;display:flex;flex-direction:column;gap:22px">
+              <div style="display:flex;align-items:center;gap:8px;color:#6f737c;font-size:11px">
+                <span style="font-family:'IBM Plex Mono',monospace">template: planning</span><span>·</span><span>generated by Claude Code via MCP</span>
+              </div>
+              <sc-for list="{{ summary }}" as="sec" hint-placeholder-count="4">
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <div style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#8b8f98">{{ sec.title }}</div>
+                  <sc-for list="{{ sec.items }}" as="it" hint-placeholder-count="3">
+                    <div style="display:flex;gap:10px;align-items:baseline;line-height:1.55;text-wrap:pretty">
+                      <span style="width:4px;height:4px;flex:none;border-radius:50%;background:#5a5e66;transform:translateY(-3px)"></span>
+                      <span style="flex:1;color:#d4d6da">{{ it.text }}<sc-if value="{{ it.owner }}" hint-placeholder-val="{{ false }}"> <span style="display:inline-flex;align-items:center;gap:4px;margin-left:4px;padding:0 6px;border-radius:4px;background:#16171a;border:1px solid #26282d;font-size:11px;color:#c9ccd2"><span style="width:6px;height:6px;border-radius:50%;background:{{ it.ownerColor }}"></span>{{ it.owner }}</span></sc-if></span>
+                      <span onClick="{{ it.onPlay }}" style="flex:none;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:1px 6px;border-radius:4px;background:#14211f;color:oklch(0.82 0.1 190);border:1px solid #213432;cursor:pointer" style-hover="background:#1a2c2a">▸ {{ it.ts }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <!-- Transcript tab -->
+          <sc-if value="{{ tabTranscript }}" hint-placeholder-val="{{ false }}">
+            <div style="position:sticky;top:0;z-index:2;display:flex;gap:8px;align-items:center;padding:10px 20px;background:#0d0e10;border-bottom:1px solid #1c1e22">
+              <input value="{{ tq }}" onChange="{{ onTq }}" placeholder="Find in transcript" style="flex:1;max-width:320px;height:28px;padding:0 10px;border-radius:6px;border:1px solid #26282d;background:#121316;color:#e4e5e8;font-size:12px;outline:none">
+              <span style="color:#5a5e66;font-size:12px">Speaker</span>
+              <sc-for list="{{ speakerFilters }}" as="f" hint-placeholder-count="4">
+                <span onClick="{{ f.onClick }}" style="display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;font-size:12px;cursor:pointer;border:1px solid {{ f.border }};color:{{ f.text }}"><span style="width:7px;height:7px;border-radius:50%;background:{{ f.color }}"></span>{{ f.name }}</span>
+              </sc-for>
+            </div>
+            <sc-if value="{{ needsLabel }}" hint-placeholder-val="{{ true }}">
+              <div style="margin:16px 20px 4px;padding:14px;border:1px solid #2e3036;border-radius:8px;background:#121316;display:flex;flex-direction:column;gap:12px;max-width:760px">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span style="width:10px;height:10px;border-radius:50%;background:#6b6f78"></span>
+                  <span style="font-weight:600;font-size:14px">Who is Speaker 3?</span>
+                  <span style="color:#6f737c;font-size:12px">9 segments · 4m 12s of speech</span>
+                  <span style="flex:1"></span>
+                  <span onClick="{{ dismissLabel }}" style="color:#6f737c;cursor:pointer;font-size:12px">Later</span>
+                </div>
+                <div style="display:flex;gap:8px">
+                  <sc-for list="{{ clips }}" as="c" hint-placeholder-count="3">
+                    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px 6px 6px;border-radius:6px;border:1px solid #26282d;background:#0d0e10;cursor:pointer" style-hover="border-color:#3a3d44">
+                      <span style="width:22px;height:22px;border-radius:50%;background:#26282d;display:grid;place-items:center;font-size:9px;color:#e4e5e8">▶</span>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8b8f98">{{ c.ts }}</span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a5e66">{{ c.len }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                  <sc-for list="{{ suggestions }}" as="g" hint-placeholder-count="3">
+                    <div onClick="{{ g.onClick }}" style="display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:6px;border:1px dashed {{ g.border }};cursor:pointer" style-hover="background:#1a1b1f">
+                      <span style="font-weight:500">{{ g.name }}?</span>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:{{ g.confColor }}">{{ g.conf }} · {{ g.label }}</span>
+                    </div>
+                  </sc-for>
+                  <input value="{{ nameInput }}" onChange="{{ onNameInput }}" placeholder="Someone else…" style="height:30px;width:170px;padding:0 10px;border-radius:6px;border:1px solid #26282d;background:#0d0e10;color:#e4e5e8;font-size:12px;outline:none">
+                  <label style="display:flex;align-items:center;gap:6px;color:#b9bcc3;font-size:12px;cursor:pointer"><input type="checkbox" checked="{{ remember }}" onChange="{{ toggleRemember }}">Remember this voice</label>
+                  <span style="flex:1"></span>
+                  <button onClick="{{ confirmTyped }}" style="height:30px;padding:0 12px;border-radius:6px;border:none;background:#e4e5e8;color:#0d0e10;font-size:12px;font-weight:500;cursor:pointer">Confirm</button>
+                </div>
+              </div>
+            </sc-if>
+            <div style="padding:8px 12px 20px;display:flex;flex-direction:column">
+              <sc-for list="{{ segments }}" as="sg" hint-placeholder-count="8">
+                <div onClick="{{ sg.onClick }}" style="display:grid;grid-template-columns:150px 64px minmax(0,1fr) auto;gap:12px;align-items:baseline;padding:8px;border-radius:6px;background:{{ sg.bg }};border-left:2px solid {{ sg.edge }};cursor:pointer" style-hover="background:#141518">
+                  <span style="display:flex;align-items:center;gap:6px;min-width:0">
+                    <span style="display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:4px;border:1px {{ sg.chipBorderStyle }} {{ sg.chipBorder }};font-size:12px;font-weight:500;color:{{ sg.color }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ sg.name }}</span>
+                    <sc-if value="{{ sg.lowConf }}" hint-placeholder-val="{{ false }}"><span title="Low confidence" style="font-family:'IBM Plex Mono',monospace;font-size:10px;width:14px;height:14px;border-radius:50%;border:1px solid #4a4d55;color:#8b8f98;display:grid;place-items:center">?</span></sc-if>
+                  </span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6f737c">{{ sg.ts }}</span>
+                  <span style="line-height:1.55;color:#d4d6da;text-wrap:pretty">{{ sg.text }}</span>
+                  <sc-if value="{{ sg.active }}" hint-placeholder-val="{{ false }}">
+                    <span style="display:flex;gap:2px">
+                      <span style="padding:2px 6px;border-radius:4px;background:#1f2024;font-size:11px;color:#b9bcc3">Play</span>
+                      <span style="padding:2px 6px;border-radius:4px;background:#1f2024;font-size:11px;color:#b9bcc3">Copy</span>
+                      <span style="padding:2px 6px;border-radius:4px;background:#1f2024;font-size:11px;color:#b9bcc3">Edit</span>
+                      <span style="padding:2px 6px;border-radius:4px;background:#1f2024;font-size:11px;color:#b9bcc3">Relabel</span>
+                    </span>
+                  </sc-if>
+                </div>
+              </sc-for>
+              <sc-if value="{{ noSegments }}" hint-placeholder-val="{{ false }}"><div style="padding:24px 8px;color:#6f737c">No segments match.</div></sc-if>
+            </div>
+          </sc-if>
+
+          <!-- Action items tab -->
+          <sc-if value="{{ tabActions }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:16px 20px;display:flex;flex-direction:column;gap:6px;max-width:860px">
+              <sc-for list="{{ meetingActions }}" as="r" hint-placeholder-count="4">
+                <div style="display:grid;grid-template-columns:18px minmax(0,1fr) 120px 70px 70px;gap:12px;align-items:center;padding:10px;border:1px solid #1f2125;border-radius:6px;background:#111215">
+                  <span style="width:14px;height:14px;border-radius:3px;border:1.5px solid #4a4d55"></span>
+                  <span style="color:#d4d6da">{{ r.text }}</span>
+                  <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#c9ccd2"><span style="width:7px;height:7px;border-radius:50%;background:{{ r.color }}"></span>{{ r.owner }}</span>
+                  <span style="font-size:12px;color:#8b8f98">{{ r.due }}</span>
+                  <span onClick="{{ r.onPlay }}" style="font-family:'IBM Plex Mono',monospace;font-size:11px;padding:1px 6px;border-radius:4px;background:#14211f;color:oklch(0.82 0.1 190);border:1px solid #213432;cursor:pointer;justify-self:start">▸ {{ r.ts }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <!-- Notes tab -->
+          <sc-if value="{{ tabNotes }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:20px;max-width:760px;display:flex;flex-direction:column;gap:10px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:1.7;color:#c9ccd2">
+              <div style="color:#e4e5e8;font-weight:500">## My notes</div>
+              <sc-for list="{{ notesLines }}" as="nl" hint-placeholder-count="4">
+                <div style="display:flex;gap:10px"><span onClick="{{ nl.onPlay }}" style="flex:none;color:oklch(0.82 0.1 190);cursor:pointer">[{{ nl.ts }}]</span><span>{{ nl.text }}</span></div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+
+        <!-- Audio player -->
+        <div style="flex:none;border-top:1px solid #222429;background:#111215;padding:10px 16px 12px;display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:12px">
+            <button onClick="{{ togglePlay }}" style="width:30px;height:30px;border-radius:50%;border:none;background:#e4e5e8;color:#0d0e10;font-size:11px;cursor:pointer;display:grid;place-items:center">{{ playGlyph }}</button>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#c9ccd2">{{ timeLabel }} <span style="color:#5a5e66">/ {{ totalLabel }}</span></span>
+            <span style="flex:1"></span>
+            <div style="display:flex;flex:none;white-space:nowrap;border:1px solid #26282d;border-radius:6px;overflow:hidden">
+              <sc-for list="{{ speeds }}" as="sp" hint-placeholder-count="4">
+                <span onClick="{{ sp.onClick }}" style="padding:3px 8px;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;background:{{ sp.bg }};color:{{ sp.color }}">{{ sp.label }}</span>
+              </sc-for>
+            </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#b9bcc3;cursor:pointer"><input type="checkbox" checked="{{ skipSilence }}" onChange="{{ toggleSkip }}">Skip silence</label>
+          </div>
+          <div style="display:flex;gap:10px">
+            <div style="width:84px;flex:none;display:flex;flex-direction:column;gap:3px">
+              <sc-for list="{{ lanes }}" as="ln" hint-placeholder-count="4">
+                <span style="height:14px;display:flex;align-items:center;gap:5px;font-size:10.5px;color:#8b8f98;white-space:nowrap;overflow:hidden"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:{{ ln.color }}"></span>{{ ln.name }}</span>
+              </sc-for>
+            </div>
+            <div onClick="{{ seek }}" style="flex:1;position:relative;display:flex;flex-direction:column;gap:3px;cursor:pointer">
+              <sc-for list="{{ lanes }}" as="ln" hint-placeholder-count="4">
+                <div style="height:14px;display:flex;align-items:center;gap:1px">
+                  <sc-for list="{{ ln.bars }}" as="b" hint-placeholder-count="40">
+                    <span style="flex:1;height:{{ b.h }};border-radius:1px;background:{{ b.c }};opacity:{{ b.o }}"></span>
+                  </sc-for>
+                </div>
+              </sc-for>
+              <div style="position:absolute;top:-3px;bottom:-3px;width:1.5px;background:#e4e5e8;left:{{ playPct }}"></div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- LIVE -->
+      <sc-if value="{{ isLive }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:none;display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid #222429">
+          {{ pulseDot }}
+          <span style="font-size:16px;font-weight:600">Cerberus rollout sync</span>
+          <div style="display:flex">
+            <sc-for list="{{ liveAtt }}" as="a" hint-placeholder-count="3">
+              <span style="width:22px;height:22px;margin-left:-5px;border-radius:50%;background:{{ a.color }};color:#0d0e10;border:2px solid #0d0e10;display:grid;place-items:center;font-size:8px;font-weight:700">{{ a.initials }}</span>
+            </sc-for>
+          </div>
+          <span style="flex:1"></span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:15px;color:#ffd9d4">{{ elapsedLabel }}</span>
+          <button onClick="{{ stopRecording }}" style="height:30px;padding:0 14px;border-radius:6px;border:none;background:oklch(0.63 0.21 25);color:#fff;font-weight:600;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px"><span style="width:9px;height:9px;background:#fff;border-radius:1px"></span>Stop</button>
+        </div>
+        <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr)">
+          <div style="overflow:auto;padding:16px 20px;display:flex;flex-direction:column;gap:14px;border-right:1px solid #222429">
+            <div style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#6f737c">Live captions · small model · replaced after the call</div>
+            <sc-for list="{{ liveCaps }}" as="lc" hint-placeholder-count="4">
+              <div style="display:flex;gap:12px">
+                <span style="width:3px;flex:none;border-radius:2px;background:{{ lc.color }}"></span>
+                <div style="display:flex;flex-direction:column;gap:3px">
+                  <div style="display:flex;gap:8px;align-items:baseline"><span style="font-weight:600;font-size:12px;color:{{ lc.color }}">{{ lc.name }}</span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a5e66">{{ lc.ts }}</span></div>
+                  <div style="line-height:1.6;color:{{ lc.textColor }};font-weight:{{ lc.weight }};font-size:14px">{{ lc.text }}</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;flex-direction:column;min-height:0">
+            <div style="padding:12px 16px 6px;display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#6f737c">Private notes</span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a5e66">Markdown</span></div>
+            <textarea value="{{ liveNotes }}" onChange="{{ onLiveNotes }}" style="flex:1;margin:0 16px;padding:10px;border-radius:6px;border:1px solid #26282d;background:#111215;color:#d4d6da;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:1.7;resize:none;outline:none"></textarea>
+            <div style="padding:12px 16px 16px;display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#6f737c">Bookmarks</span><span onClick="{{ addBookmark }}" style="font-size:12px;color:#b9bcc3;cursor:pointer">+ Bookmark <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a5e66">Ctrl+Shift+B</span></span></div>
+              <sc-for list="{{ bookmarks }}" as="bm" hint-placeholder-count="2">
+                <div style="display:flex;gap:8px;align-items:center;font-size:12px;color:#c9ccd2"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:oklch(0.82 0.1 190)">{{ bm.ts }}</span>{{ bm.label }}</div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ACTION ITEMS -->
+      <sc-if value="{{ isActions }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:none;display:flex;align-items:center;gap:12px;padding:16px 20px">
+          <span style="font-size:20px;font-weight:600;letter-spacing:-0.015em">Action items</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#6f737c">{{ openCount }} open</span>
+          <span style="flex:1"></span>
+          <button onClick="{{ bulkJira }}" style="height:28px;padding:0 12px;border-radius:6px;border:1px solid #2e3036;background:#e4e5e8;color:#0d0e10;font-size:12px;font-weight:500;cursor:pointer">{{ bulkLabel }}</button>
+        </div>
+        <div style="flex:1;overflow:auto;padding:0 20px 20px">
+          <div style="display:grid;grid-template-columns:28px minmax(0,1fr) 130px 80px 220px 110px 90px;gap:0;font-size:12.5px">
+            <span style="padding:8px 4px;border-bottom:1px solid #222429"></span>
+            <span style="padding:8px 4px;border-bottom:1px solid #222429;color:#6f737c;font-size:11px">Item</span>
+            <span style="padding:8px 4px;border-bottom:1px solid #222429;color:#6f737c;font-size:11px">Owner</span>
+            <span style="padding:8px 4px;border-bottom:1px solid #222429;color:#6f737c;font-size:11px">Due</span>
+            <span style="padding:8px 4px;border-bottom:1px solid #222429;color:#6f737c;font-size:11px">Source</span>
+            <span style="padding:8px 4px;border-bottom:1px solid #222429;color:#6f737c;font-size:11px">Status</span>
+            <span style="padding:8px 4px;border-bottom:1px solid #222429"></span>
+            <sc-for list="{{ allActions }}" as="r" hint-placeholder-count="6">
+              <span style="padding:10px 4px;border-bottom:1px solid #1a1c20"><input type="checkbox" checked="{{ r.checked }}" onChange="{{ r.onCheck }}"></span>
+              <span style="padding:10px 4px;border-bottom:1px solid #1a1c20;color:#d4d6da">{{ r.text }}</span>
+              <span style="padding:10px 4px;border-bottom:1px solid #1a1c20;display:flex;align-items:center;gap:6px;color:#c9ccd2"><span style="width:7px;height:7px;border-radius:50%;background:{{ r.color }}"></span>{{ r.owner }}</span>
+              <span style="padding:10px 4px;border-bottom:1px solid #1a1c20;color:#8b8f98">{{ r.due }}</span>
+              <span style="padding:10px 4px;border-bottom:1px solid #1a1c20;display:flex;align-items:center;gap:6px;min-width:0"><span style="color:#8b8f98;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.meeting }}</span><span onClick="{{ r.onPlay }}" style="flex:none;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:0 5px;border-radius:4px;background:#14211f;color:oklch(0.82 0.1 190);border:1px solid #213432;cursor:pointer">{{ r.ts }}</span></span>
+              <span style="padding:6px 4px;border-bottom:1px solid #1a1c20"><select value="{{ r.status }}" onChange="{{ r.onStatus }}" style="height:26px;width:100%;border-radius:5px;border:1px solid #26282d;background:#121316;color:{{ r.statusColor }};font-size:12px;padding:0 4px"><option>Open</option><option>In Jira</option><option>Done</option></select></span>
+              <span style="padding:6px 4px;border-bottom:1px solid #1a1c20"><button onClick="{{ r.onJira }}" style="height:26px;width:100%;border-radius:5px;border:1px solid #2e3036;background:#16171a;color:#c9ccd2;font-size:11.5px;cursor:pointer">{{ r.jiraLabel }}</button></span>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- PEOPLE -->
+      <sc-if value="{{ isPeople }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:none;display:flex;align-items:baseline;gap:12px;padding:16px 20px">
+          <span style="font-size:20px;font-weight:600;letter-spacing:-0.015em">People</span>
+          <span style="color:#6f737c;font-size:12px">Voiceprints are stored encrypted on this machine and can be deleted per person.</span>
+        </div>
+        <div style="flex:1;overflow:auto;padding:0 20px 20px">
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) 110px 90px 110px 320px;font-size:12.5px">
+            <span style="padding:8px 4px;border-bottom:1px solid #222429;color:#6f737c;font-size:11px">Name</span>
+            <span style="padding:8px 4px;border-bottom:1px solid #222429;color:#6f737c;font-size:11px">Meetings heard</span>
+            <span style="padding:8px 4px;border-bottom:1px solid #222429;color:#6f737c;font-size:11px">Samples</span>
+            <span style="padding:8px 4px;border-bottom:1px solid #222429;color:#6f737c;font-size:11px">Last heard</span>
+            <span style="padding:8px 4px;border-bottom:1px solid #222429"></span>
+            <sc-for list="{{ people }}" as="p" hint-placeholder-count="5">
+              <span style="padding:10px 4px;border-bottom:1px solid #1a1c20;display:flex;align-items:center;gap:10px;background:{{ p.bg }}"><span style="width:12px;height:12px;border-radius:3px;background:{{ p.color }}"></span><span style="font-weight:500">{{ p.name }}</span><span style="font-size:11px;color:#6f737c">{{ p.tag }}</span></span>
+              <span style="padding:10px 4px;border-bottom:1px solid #1a1c20;font-family:'IBM Plex Mono',monospace;color:#b9bcc3;background:{{ p.bg }}">{{ p.meetings }}</span>
+              <span style="padding:10px 4px;border-bottom:1px solid #1a1c20;font-family:'IBM Plex Mono',monospace;color:#b9bcc3;background:{{ p.bg }}">{{ p.samples }}</span>
+              <span style="padding:10px 4px;border-bottom:1px solid #1a1c20;color:#8b8f98;background:{{ p.bg }}">{{ p.last }}</span>
+              <span style="padding:6px 4px;border-bottom:1px solid #1a1c20;display:flex;gap:4px;justify-content:flex-end;align-items:center;background:{{ p.bg }}">
+                <sc-for list="{{ p.actions }}" as="ac" hint-placeholder-count="4">
+                  <span style="padding:3px 8px;border-radius:5px;border:1px solid #26282d;font-size:11.5px;color:{{ ac.color }};cursor:pointer" style-hover="background:#1a1b1f">{{ ac.label }}</span>
+                </sc-for>
+              </span>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- SEARCH -->
+      <sc-if value="{{ isSearch }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:none;padding:16px 20px 10px;display:flex;flex-direction:column;gap:10px;border-bottom:1px solid #222429">
+          <input value="{{ query }}" onChange="{{ onQuery }}" placeholder="Search every meeting" style="height:38px;padding:0 12px;border-radius:7px;border:1px solid #33363c;background:#111215;color:#e4e5e8;font-size:15px;outline:none">
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px">
+            <span style="color:#5a5e66">Person</span>
+            <sc-for list="{{ searchPeople }}" as="f" hint-placeholder-count="4">
+              <span onClick="{{ f.onClick }}" style="display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;cursor:pointer;border:1px solid {{ f.border }};color:{{ f.text }}"><span style="width:7px;height:7px;border-radius:50%;background:{{ f.color }}"></span>{{ f.name }}</span>
+            </sc-for>
+            <span style="color:#5a5e66;margin-left:10px">Date</span><span style="padding:3px 8px;border-radius:12px;border:1px solid #26282d;color:#b9bcc3">Last 30 days ▾</span>
+            <span style="color:#5a5e66;margin-left:10px">Type</span><span style="padding:3px 8px;border-radius:12px;border:1px solid #26282d;color:#b9bcc3">Any ▾</span>
+            <span style="flex:1"></span><span style="font-family:'IBM Plex Mono',monospace;color:#6f737c">{{ resultCount }} hits</span>
+          </div>
+        </div>
+        <div style="flex:1;overflow:auto;padding:12px 20px 20px;display:flex;flex-direction:column;gap:18px">
+          <sc-for list="{{ results }}" as="rg" hint-placeholder-count="3">
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <div style="display:flex;gap:10px;align-items:baseline;padding:0 8px"><span style="font-weight:600">{{ rg.meeting }}</span><span style="color:#6f737c;font-size:12px">{{ rg.date }}</span></div>
+              <sc-for list="{{ rg.hits }}" as="h" hint-placeholder-count="2">
+                <div onClick="{{ h.onClick }}" style="display:grid;grid-template-columns:120px 60px minmax(0,1fr);gap:12px;align-items:baseline;padding:8px;border-radius:6px;cursor:pointer" style-hover="background:#141518">
+                  <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#c9ccd2"><span style="width:7px;height:7px;border-radius:50%;background:{{ h.color }}"></span>{{ h.name }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:oklch(0.82 0.1 190)">{{ h.ts }}</span>
+                  <span style="line-height:1.55;color:#b9bcc3">{{ h.pre }}<mark style="background:oklch(0.82 0.1 190 / .22);color:#eafffb;border-radius:2px;padding:0 1px">{{ h.hit }}</mark>{{ h.post }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+          <sc-if value="{{ noResults }}" hint-placeholder-val="{{ false }}"><div style="color:#6f737c;padding:20px 8px">Nothing found across {{ meetingCount }} meetings.</div></sc-if>
+        </div>
+      </sc-if>
+    </div>
+
+    <!-- Ask panel -->
+    <sc-if value="{{ askOpen }}" hint-placeholder-val="{{ true }}">
+      <div style="width:360px;flex:none;display:flex;flex-direction:column;border-left:1px solid #222429;background:#111215;min-height:0">
+        <div style="padding:12px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #222429">
+          <span style="font-weight:600">Ask</span>
+          <span style="display:flex;align-items:center;gap:5px;padding:1px 7px;border-radius:4px;background:#16171a;border:1px solid #26282d;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#b9bcc3"><span style="width:6px;height:6px;border-radius:50%;background:oklch(0.74 0.13 150)"></span>claude-code</span>
+          <span style="flex:1"></span>
+          <div style="display:flex;flex:none;white-space:nowrap;border:1px solid #26282d;border-radius:6px;overflow:hidden;font-size:11.5px">
+            <sc-for list="{{ scopes }}" as="sc" hint-placeholder-count="2">
+              <span onClick="{{ sc.onClick }}" style="padding:3px 8px;cursor:pointer;background:{{ sc.bg }};color:{{ sc.color }}">{{ sc.label }}</span>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:14px">
+          <sc-for list="{{ messages }}" as="msg" hint-placeholder-count="2">
+            <div style="display:flex;flex-direction:column;gap:6px;align-items:{{ msg.align }}">
+              <div style="max-width:92%;padding:9px 11px;border-radius:8px;line-height:1.55;background:{{ msg.bg }};color:#d4d6da;text-wrap:pretty">{{ msg.text }}</div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap">
+                <sc-for list="{{ msg.cites }}" as="ct" hint-placeholder-count="0">
+                  <span onClick="{{ ct.onClick }}" style="font-family:'IBM Plex Mono',monospace;font-size:11px;padding:1px 6px;border-radius:4px;background:#14211f;color:oklch(0.82 0.1 190);border:1px solid #213432;cursor:pointer">▸ {{ ct.label }}</span>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+          <sc-if value="{{ showApproval }}" hint-placeholder-val="{{ true }}">
+            <div style="border:1px solid #33363c;border-radius:8px;background:#16171a;padding:12px;display:flex;flex-direction:column;gap:8px">
+              <div style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#8b8f98">Agent wants to</div>
+              <div style="font-weight:500">Create 3 Jira issues in PLAT</div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8b8f98;line-height:1.6">create_jira_issue × 3<br>PLAT · from AKS migration planning</div>
+              <div style="display:flex;gap:6px;margin-top:2px">
+                <button onClick="{{ approve }}" style="flex:1;height:28px;border-radius:6px;border:none;background:#e4e5e8;color:#0d0e10;font-weight:500;font-size:12px;cursor:pointer">Approve</button>
+                <button onClick="{{ deny }}" style="flex:1;height:28px;border-radius:6px;border:1px solid #2e3036;background:transparent;color:#c9ccd2;font-size:12px;cursor:pointer">Deny</button>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ approvalDone }}" hint-placeholder-val="{{ false }}"><div style="font-size:12px;color:#8b8f98;font-family:'IBM Plex Mono',monospace">{{ approvalNote }}</div></sc-if>
+        </div>
+        <div style="padding:10px 14px 14px;border-top:1px solid #222429;display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <sc-for list="{{ prompts }}" as="pr" hint-placeholder-count="2">
+              <span onClick="{{ pr.onClick }}" style="padding:3px 8px;border-radius:12px;border:1px solid #26282d;font-size:11.5px;color:#b9bcc3;cursor:pointer" style-hover="background:#1a1b1f">{{ pr.label }}</span>
+            </sc-for>
+          </div>
+          <div style="display:flex;gap:6px">
+            <input value="{{ askInput }}" onChange="{{ onAskInput }}" onKeyDown="{{ onAskKey }}" placeholder="{{ askPlaceholder }}" style="flex:1;height:32px;padding:0 10px;border-radius:6px;border:1px solid #2e3036;background:#0d0e10;color:#e4e5e8;font-size:12.5px;outline:none">
+            <button onClick="{{ sendAsk }}" style="height:32px;padding:0 12px;border-radius:6px;border:none;background:#e4e5e8;color:#0d0e10;font-size:12px;font-weight:500;cursor:pointer">Send</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+
+  <!-- Meeting detected toast -->
+  <sc-if value="{{ showToast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;right:16px;bottom:16px;width:340px;z-index:20;padding:14px;border-radius:8px;border:1px solid #33363c;background:#1a1b1f;box-shadow:0 12px 32px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:#8b8f98"><span style="width:12px;height:12px;border-radius:3px;background:#e4e5e8"></span>switchscribe<span style="flex:1"></span><span onClick="{{ ignoreToast }}" style="cursor:pointer">✕</span></div>
+      <div style="font-weight:600;line-height:1.4">Teams meeting detected: Cerberus rollout sync</div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#b9bcc3"><input type="checkbox">Always record meetings with this title</label>
+      <div style="display:flex;gap:6px">
+        <button onClick="{{ startRecording }}" style="flex:1;height:30px;border-radius:6px;border:none;background:#e4e5e8;color:#0d0e10;font-weight:500;font-size:12px;cursor:pointer">Record</button>
+        <button onClick="{{ ignoreToast }}" style="flex:1;height:30px;border-radius:6px;border:1px solid #2e3036;background:transparent;color:#c9ccd2;font-size:12px;cursor:pointer">Ignore</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- Mini recorder -->
+  <sc-if value="{{ recording }}" hint-placeholder-val="{{ false }}">
+    <div onMouseEnter="{{ miniEnter }}" onMouseLeave="{{ miniLeave }}" style="position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:21;width:{{ miniWidth }};border-radius:28px;border:1px solid #33363c;background:#18191c;box-shadow:0 14px 36px rgba(0,0,0,.55);padding:0 8px 0 18px;display:flex;flex-direction:column;justify-content:center;cursor:grab">
+      <sc-if value="{{ miniHover }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:10px 6px 0 0;display:flex;flex-direction:column;gap:3px">
+          <span style="font-weight:600;font-size:12.5px">Cerberus rollout sync</span>
+          <span style="font-size:12px;color:#8b8f98;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ liveCaptionLine }}</span>
+        </div>
+      </sc-if>
+      <div style="height:54px;display:flex;align-items:center;gap:12px">
+        {{ pulseDot }}
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:#ffd9d4;width:52px">{{ elapsedLabel }}</span>
+        <div style="display:flex;flex-direction:column;gap:4px;width:70px">
+          <sc-for list="{{ meters }}" as="mt" hint-placeholder-count="2">
+            <div style="display:flex;align-items:center;gap:5px"><span style="font-size:9.5px;color:#8b8f98;width:30px">{{ mt.label }}</span><span style="flex:1;height:4px;border-radius:2px;background:#2a2c31;overflow:hidden"><span style="display:block;height:100%;width:{{ mt.w }};background:#c9ccd2"></span></span></div>
+          </sc-for>
+        </div>
+        <span style="flex:1"></span>
+        <span onClick="{{ addBookmark }}" title="Bookmark" style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:11px;color:#c9ccd2;cursor:pointer" style-hover="background:#26282d">◆</span>
+        <span onClick="{{ goLive }}" title="Quick note" style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:12px;color:#c9ccd2;cursor:pointer" style-hover="background:#26282d">✎</span>
+        <span onClick="{{ togglePause }}" title="Pause" style="width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;gap:3px;cursor:pointer" style-hover="background:#26282d"><span style="width:3px;height:11px;background:#c9ccd2;border-radius:1px"></span><span style="width:3px;height:11px;background:#c9ccd2;border-radius:1px"></span></span>
+        <span onClick="{{ stopRecording }}" title="Stop" style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:oklch(0.63 0.21 25);cursor:pointer"><span style="width:10px;height:10px;background:#fff;border-radius:1.5px"></span></span>
+      </div>
+    </div>
+  </sc-if>
+</div></div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;askOpenDefault&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;showDetectToast&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;errorState&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;none&quot;,&quot;mic&quot;,&quot;teams&quot;,&quot;model&quot;,&quot;cli&quot;],&quot;default&quot;:&quot;none&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+const SP = {
+  me: { name: 'Jeremie', full: 'Jeremie (you)', initials: 'JR', color: 'oklch(0.72 0.13 250)' },
+  priya: { name: 'Priya Nair', initials: 'PN', color: 'oklch(0.74 0.13 150)' },
+  marcus: { name: 'Marcus Chen', initials: 'MC', color: 'oklch(0.72 0.13 300)' },
+  dana: { name: 'Dana Ortiz', initials: 'DO', color: 'oklch(0.74 0.12 340)' },
+  sam: { name: 'Sam Lee', initials: 'SL', color: 'oklch(0.76 0.12 110)' },
+};
+const GRAY = '#6b6f78';
+const TOTAL = 2832;
+const SEGS = [
+  [14, 'me', "Okay, let's start. Main thing today is the AKS migration cutover. Priya, where are we on the node pools?"],
+  [31, 'priya', "Two of three pools are on the new cluster. The GPU pool is the holdout — we're waiting on quota in West Europe."],
+  [74, 'marcus', "I raised the quota ticket Monday. Microsoft said five business days, so realistically next Wednesday."],
+  [118, 's3', "Can we cut over without the GPU pool and leave transcoding on the old cluster for a week?", true],
+  [171, 'priya', "Technically yes. The ingress split is easy, it's the Cerberus auth tokens that worry me."],
+  [236, 'me', "Then let's decide that now: we cut over the two pools on the 22nd and keep GPU workloads on the old cluster."],
+  [302, 'marcus', "Fine by me. I'll need a rollback runbook before I sign off though."],
+  [366, 'me', "Agreed. I'll write the runbook by Friday and share it in the platform channel."],
+  [512, 's3', "On EZBook — the booking service still pins the old Redis endpoint. That breaks on cutover.", false],
+  [640, 'priya', "I can move EZBook to the config-driven endpoint. Half a day, I'll have it by Tuesday."],
+  [905, 'marcus', "Open question: do we tell the vendor before or after the cutover? Their webhook IPs change.", true],
+  [1260, 's3', "Before. Their allow-list change takes them 48 hours.", false],
+  [1810, 'me', "Okay, Marcus, can you own the vendor email? Let's aim for Monday."],
+  [2380, 'priya', "Last thing — monitoring. I want Datadog dashboards on the new cluster before anyone touches DNS."],
+  [2640, 'me', "Good. Let's wrap. I'll send the summary and the Jira tickets after this."],
+];
+const MEETINGS = [
+  { id: 'aks', group: 'Today', title: 'AKS migration planning', time: '10:00', dur: '47m', durLong: '47:12', date: 'Thu, Oct 15, 2026 · 10:00', status: 'labels', att: ['me', 'priya', 'marcus', 's3'] },
+  { id: 'standup', group: 'Today', title: 'Platform standup', time: '09:15', dur: '14m', durLong: '14:03', date: 'Thu, Oct 15, 2026 · 09:15', status: 'ready', att: ['me', 'priya', 'marcus'] },
+  { id: 'vendor', group: 'Yesterday', title: 'Vendor call — Datadog', time: '15:30', dur: '52m', durLong: '52:40', date: 'Wed, Oct 14, 2026 · 15:30', status: 'processing', att: ['me', 'sam'] },
+  { id: '1on1', group: 'Yesterday', title: '1:1 Priya', time: '11:00', dur: '28m', durLong: '28:19', date: 'Wed, Oct 14, 2026 · 11:00', status: 'ready', att: ['me', 'priya'] },
+  { id: 'cerb', group: 'This week', title: 'Cerberus incident review', time: 'Tue', dur: '38m', durLong: '38:51', date: 'Tue, Oct 13, 2026 · 14:00', status: 'ready', att: ['me', 'marcus', 'dana', 'sam'] },
+  { id: 'ezb', group: 'This week', title: 'EZBook roadmap sync', time: 'Mon', dur: '45m', durLong: '45:02', date: 'Mon, Oct 12, 2026 · 13:00', status: 'ready', att: ['me', 'dana'] },
+  { id: 'q4', group: 'Older', title: 'Q4 planning', time: 'Oct 2', dur: '1h 20m', durLong: '1:20:44', date: 'Fri, Oct 2, 2026 · 10:00', status: 'ready', att: ['me', 'priya', 'marcus', 'dana'] },
+];
+const ACTIONS = [
+  { id: 1, text: 'Write cutover rollback runbook and share in #platform', owner: 'me', due: 'Fri', meeting: 'AKS migration planning', t: 366, mine: true },
+  { id: 2, text: 'Move EZBook to config-driven Redis endpoint', owner: 'priya', due: 'Tue', meeting: 'AKS migration planning', t: 640, mine: true },
+  { id: 3, text: 'Email vendor about webhook IP change', owner: 'marcus', due: 'Mon', meeting: 'AKS migration planning', t: 1810, mine: true },
+  { id: 4, text: 'Datadog dashboards live on new cluster before DNS', owner: 'priya', due: '—', meeting: 'AKS migration planning', t: 2380, mine: true },
+  { id: 5, text: 'Rotate Cerberus signing keys on staging', owner: 'marcus', due: 'Oct 16', meeting: 'Cerberus incident review', t: 812 },
+  { id: 6, text: 'Send Datadog contract redlines to legal', owner: 'me', due: 'Oct 19', meeting: 'Vendor call — Datadog', t: 2210 },
+  { id: 7, text: 'Draft EZBook Q1 scope one-pager', owner: 'dana', due: 'Oct 20', meeting: 'EZBook roadmap sync', t: 1504 },
+];
+const LIVE = [
+  ['me', '00:12', "Thanks for jumping on. Quick one — Cerberus rollout to prod tomorrow, any blockers?"],
+  ['marcus', '00:31', "Staging keys are rotated. The only open item is the alert thresholds."],
+  ['dana', '01:04', "EZBook's ready on our side, we tested the new token flow last night and it held up under load."],
+];
+const LIVE_STREAM = "I'd like one more soak test overnight before we flip it, mostly to watch the token refresh path at peak and make sure nothing regresses";
+const fmt = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; const p = n => String(n).padStart(2, '0'); return h ? `${h}:${p(m)}:${p(x)}` : `${p(m)}:${p(x)}`; };
+const rnd = i => { const x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x); };
+
+class Component extends DCLogic {
+  state = {
+    screen: 'meeting', sel: 'aks', tab: 'summary', askOpen: (this.props.askOpenDefault ?? true) && (typeof window === 'undefined' || window.innerWidth >= 1200),
+    recording: false, elapsed: 0, paused: false, levels: [0.4, 0.6], liveWords: 0,
+    playing: false, time: 236, speed: 1, skipSilence: true,
+    named: false, labelDismissed: false, nameInput: '', remember: true,
+    spFilter: null, tq: '', query: 'cutover', searchPerson: null,
+    scope: 'meeting', askInput: '', approval: 'pending',
+    messages: [
+      { role: 'user', text: 'What did we decide about the AKS cutover?' },
+      { role: 'agent', text: 'Cut over the two CPU node pools on Oct 22 and keep GPU transcoding on the old cluster until the West Europe quota lands. Marcus wants a rollback runbook before signing off.', cites: [236, 302] },
+    ],
+    statuses: { 1: 'Open', 2: 'Open', 3: 'Open', 4: 'Open', 5: 'In Jira', 6: 'Open', 7: 'Done' },
+    checked: { 1: true, 2: true, 3: true },
+    toast: false, miniHover: false, newMeeting: null,
+    liveNotes: "- Cerberus prod tomorrow\n- [01:20] thresholds still open → ask Marcus\n",
+    bookmarks: [{ ts: '00:48', label: 'Alert thresholds' }],
+  };
+  componentDidMount() {
+    this.iv = setInterval(() => {
+      const s = this.state, u = {};
+      if (s.recording && !s.paused) { u.elapsed = s.elapsed + 0.25; u.levels = [Math.random() * 0.8, 0.3 + Math.random() * 0.7]; u.liveWords = s.liveWords + 1; }
+      if (s.playing) { const t = s.time + 0.25 * s.speed * 4; u.time = t >= TOTAL ? 0 : t; if (t >= TOTAL) u.playing = false; }
+      if (Object.keys(u).length) this.setState(u);
+    }, 250);
+    this.tt = setTimeout(() => { if (!this.state.recording && (this.props.showDetectToast ?? true)) this.setState({ toast: true }); }, 1400);
+  }
+  componentWillUnmount() { clearInterval(this.iv); clearTimeout(this.tt); }
+
+  sp(k) {
+    if (k === 's3') return this.state.named ? SP.dana : { name: 'Speaker 3', initials: 'S3', color: GRAY };
+    return SP[k];
+  }
+  playAt = t => this.setState({ time: t, playing: true, screen: 'meeting', sel: 'aks' });
+  segIndexAt(t) { let i = 0; SEGS.forEach((s, j) => { if (s[0] <= t) i = j; }); return i; }
+  confirmName = () => this.setState({ named: true });
+
+  renderVals() {
+    const s = this.state;
+    const mono = "'IBM Plex Mono',monospace";
+    const all = s.newMeeting ? [s.newMeeting, ...MEETINGS] : MEETINGS;
+    const liveRow = s.recording ? [{ id: 'live', group: 'Today', title: 'Cerberus rollout sync', time: 'now', dur: fmt(s.elapsed), status: 'recording', att: ['me', 'marcus', 'dana'] }] : [];
+    const list = [...liveRow, ...all];
+    const groups = ['Today', 'Yesterday', 'This week', 'Older'].map(g => ({
+      label: g,
+      items: list.filter(m => m.group === g).map(m => {
+        const status = m.id === 'aks' && s.named ? 'ready' : m.status;
+        return {
+          ...m, isRec: status === 'recording', isProc: status === 'processing', isLabels: status === 'labels',
+          bg: (s.screen === 'meeting' && s.sel === m.id) || (m.id === 'live' && s.screen === 'live') ? '#1d1e22' : 'transparent',
+          att: m.att.map(k => this.sp(k)),
+          onClick: () => this.setState(m.id === 'live' ? { screen: 'live' } : { screen: 'meeting', sel: m.id }),
+        };
+      }),
+    })).filter(g => g.items.length);
+    const selM = all.find(m => m.id === s.sel) || MEETINGS[0];
+    const openCount = ACTIONS.filter(a => s.statuses[a.id] === 'Open').length;
+    const nav = [
+      ['actions', 'Action items', String(openCount)], ['people', 'People', '5'], ['search', 'Search', 'Ctrl+Shift+F'],
+    ].map(([k, label, meta]) => ({ label, meta, color: s.screen === k ? '#e4e5e8' : '#a9adb5', bg: s.screen === k ? '#1d1e22' : 'transparent', onClick: () => this.setState({ screen: k }) }));
+
+    const tabs = [['summary', 'Summary', ''], ['transcript', 'Transcript', String(SEGS.length)], ['actions', 'Action items', '4'], ['notes', 'Notes', '']].map(([k, label, count]) => ({
+      label, count, color: s.tab === k ? '#e4e5e8' : '#8b8f98', border: s.tab === k ? '#e4e5e8' : 'transparent', onClick: () => this.setState({ tab: k }),
+    }));
+    const stamp = (t) => ({ ts: fmt(t), onPlay: () => this.playAt(t) });
+    const summary = [
+      { title: 'Summary', items: [
+        { text: 'Two of three AKS node pools are migrated; the GPU pool is blocked on West Europe quota, expected next Wednesday.', ...stamp(31) },
+        { text: 'EZBook still pins the old Redis endpoint and would break on cutover.', ...stamp(512) },
+        { text: 'Monitoring on the new cluster must be in place before DNS changes.', ...stamp(2380) },
+      ] },
+      { title: 'Decisions', items: [
+        { text: 'Cut over the two CPU pools on Oct 22; GPU transcoding stays on the old cluster for a week.', ...stamp(236) },
+        { text: 'Notify the vendor before cutover, since their allow-list change takes 48 hours.', ...stamp(1260) },
+      ] },
+      { title: 'Action items', items: ACTIONS.filter(a => a.mine).map(a => ({ text: a.text + (a.due !== '—' ? ` · due ${a.due}` : ''), owner: this.sp(a.owner).name, ownerColor: this.sp(a.owner).color, ...stamp(a.t) })) },
+      { title: 'Open questions', items: [
+        { text: 'Do the Cerberus auth tokens survive the ingress split?', ...stamp(171) },
+        { text: 'Who approves the rollback runbook?', ...stamp(302) },
+      ] },
+    ];
+
+    const activeIdx = this.segIndexAt(s.time);
+    const q = s.tq.trim().toLowerCase();
+    const segments = SEGS.map((g, i) => ({ g, i })).filter(({ g }) => (!s.spFilter || g[1] === s.spFilter) && (!q || g[2].toLowerCase().includes(q))).map(({ g, i }) => {
+      const p = this.sp(g[1]); const unknown = g[1] === 's3' && !s.named;
+      return {
+        name: unknown ? 'Dana?' : p.name, color: unknown ? '#b9bcc3' : p.color, chipBorder: unknown ? '#5a5e66' : p.color, chipBorderStyle: unknown ? 'dashed' : 'solid',
+        lowConf: !!g[3], ts: fmt(g[0]), text: g[2], active: i === activeIdx,
+        bg: i === activeIdx ? '#15171a' : 'transparent', edge: i === activeIdx ? p.color : 'transparent',
+        onClick: () => this.setState({ time: g[0] }),
+      };
+    });
+    const spKeys = ['me', 'priya', 'marcus', 's3'];
+    const speakerFilters = spKeys.map(k => { const p = this.sp(k); const on = s.spFilter === k; return { name: p.name, color: p.color, border: on ? p.color : '#26282d', text: on ? '#e4e5e8' : '#a9adb5', onClick: () => this.setState({ spFilter: on ? null : k }) }; });
+
+    const N = 120;
+    const lanes = spKeys.map(k => {
+      const p = this.sp(k);
+      const bars = [];
+      for (let b = 0; b < N; b++) {
+        const t = (b + 0.5) / N * TOTAL; const idx = this.segIndexAt(t);
+        const on = SEGS[idx][1] === k && t - SEGS[idx][0] < 140;
+        const h = on ? 30 + rnd(b * 7 + k.length) * 70 : 14;
+        bars.push({ h: h + '%', c: on ? p.color : '#26282d', o: t <= s.time ? '1' : on ? '0.55' : '1' });
+      }
+      return { name: p.name, color: p.color, bars };
+    });
+    const speeds = [1, 1.25, 1.5, 2].map(v => ({ label: v + '×', bg: s.speed === v ? '#26282d' : 'transparent', color: s.speed === v ? '#e4e5e8' : '#8b8f98', onClick: () => this.setState({ speed: v }) }));
+
+    const pulseDot = React.createElement('span', { key: 'pd', style: { width: 9, height: 9, flex: 'none', borderRadius: '50%', background: 'oklch(0.63 0.21 25)', animation: s.paused ? 'none' : 'ssPulse 1.4s infinite', opacity: s.paused ? 0.5 : 1 } });
+
+    const words = LIVE_STREAM.split(' ');
+    const shown = words.slice(0, Math.min(words.length, Math.floor(s.liveWords / 2) + 1)).join(' ');
+    const liveCaps = [...LIVE.map(([k, ts, text]) => ({ k, ts, text, prov: false })), { k: 'marcus', ts: '01:38', text: shown, prov: true }].map(c => ({
+      name: SP[c.k].name, color: SP[c.k].color, ts: c.ts, text: c.text, textColor: c.prov ? '#8b8f98' : '#d4d6da', weight: c.prov ? 300 : 400,
+    }));
+
+    const allActions = ACTIONS.map(a => { const p = this.sp(a.owner); const st = s.statuses[a.id]; return {
+      text: a.text, owner: p.name, color: p.color, due: a.due, meeting: a.meeting, ts: fmt(a.t), status: st,
+      statusColor: st === 'Done' ? '#6f737c' : st === 'In Jira' ? 'oklch(0.82 0.1 190)' : '#e4e5e8',
+      checked: !!s.checked[a.id], jiraLabel: st === 'Open' ? 'Send to Jira' : 'View',
+      onCheck: () => this.setState({ checked: { ...s.checked, [a.id]: !s.checked[a.id] } }),
+      onStatus: e => this.setState({ statuses: { ...s.statuses, [a.id]: e.target.value } }),
+      onJira: () => this.setState({ statuses: { ...s.statuses, [a.id]: 'In Jira' } }),
+      onPlay: () => this.playAt(a.t),
+    }; });
+    const nChecked = ACTIONS.filter(a => s.checked[a.id] && s.statuses[a.id] === 'Open').length;
+    const meetingActions = ACTIONS.filter(a => a.mine).map(a => ({ text: a.text, owner: this.sp(a.owner).name, color: this.sp(a.owner).color, due: a.due, ts: fmt(a.t), onPlay: () => this.playAt(a.t) }));
+
+    const act = (labels) => labels.map(l => ({ label: l, color: l === 'Delete' ? '#a9adb5' : '#c9ccd2' }));
+    const people = [
+      { ...SP.me, name: 'Jeremie', tag: 'you · mic track', meetings: '48', samples: '1 enrolled', last: 'Today', bg: '#121316', actions: act(['Play sample', 'Re-record my voice']) },
+      { ...SP.priya, tag: '', meetings: '31', samples: '12', last: 'Today', bg: 'transparent', actions: act(['Play', 'Re-enroll', 'Merge', 'Delete']) },
+      { ...SP.marcus, tag: '', meetings: '27', samples: '12', last: 'Today', bg: 'transparent', actions: act(['Play', 'Re-enroll', 'Merge', 'Delete']) },
+      { ...SP.dana, tag: s.named ? 'updated today' : '', meetings: s.named ? '9' : '8', samples: s.named ? '7' : '6', last: s.named ? 'Today' : 'Tue', bg: 'transparent', actions: act(['Play', 'Re-enroll', 'Merge', 'Delete']) },
+      { ...SP.sam, tag: '', meetings: '6', samples: '4', last: 'Yesterday', bg: 'transparent', actions: act(['Play', 'Re-enroll', 'Merge', 'Delete']) },
+    ];
+
+    const pool = [
+      ...SEGS.map(g => ({ meeting: 'AKS migration planning', date: 'Today', k: g[1], t: g[0], text: g[2] })),
+      { meeting: 'Cerberus incident review', date: 'Tue, Oct 13', k: 'marcus', t: 812, text: 'Before any cutover we rotate the Cerberus signing keys on staging, then prod.' },
+      { meeting: 'Cerberus incident review', date: 'Tue, Oct 13', k: 'dana', t: 1340, text: 'EZBook saw token refresh failures for about nine minutes during the incident.' },
+      { meeting: 'Q4 planning', date: 'Fri, Oct 2', k: 'priya', t: 2210, text: 'The AKS migration is the main platform goal for Q4, cutover targeted late October.' },
+      { meeting: 'Vendor call — Datadog', date: 'Wed, Oct 14', k: 'sam', t: 640, text: 'Dashboards for the new cluster can be templated from the existing ones in a day.' },
+    ];
+    const qq = s.query.trim().toLowerCase();
+    const hits = qq ? pool.filter(p => p.text.toLowerCase().includes(qq) && (!s.searchPerson || p.k === s.searchPerson)) : [];
+    const byM = {};
+    hits.forEach(h => { (byM[h.meeting] = byM[h.meeting] || { meeting: h.meeting, date: h.date, hits: [] }).hits.push(h); });
+    const results = Object.values(byM).map(r => ({ ...r, hits: r.hits.map(h => { const i = h.text.toLowerCase().indexOf(qq); const p = this.sp(h.k); return {
+      name: p.name, color: p.color, ts: fmt(h.t), pre: h.text.slice(0, i), hit: h.text.slice(i, i + qq.length), post: h.text.slice(i + qq.length),
+      onClick: () => h.meeting === 'AKS migration planning' ? this.setState({ screen: 'meeting', sel: 'aks', tab: 'transcript', time: h.t }) : null,
+    }; }) }));
+    const searchPeople = ['me', 'priya', 'marcus', 'dana', 'sam'].map(k => { const p = SP[k]; const on = s.searchPerson === k; return { name: p.name, color: p.color, border: on ? p.color : '#26282d', text: on ? '#e4e5e8' : '#a9adb5', onClick: () => this.setState({ searchPerson: on ? null : k }) }; });
+
+    const messages = s.messages.map(m => ({ text: m.text, align: m.role === 'user' ? 'flex-end' : 'flex-start', bg: m.role === 'user' ? '#1f2024' : 'transparent', cites: (m.cites || []).map(t => ({ label: fmt(t), onClick: () => this.playAt(t) })) }));
+    const ask = (text) => {
+      if (!text.trim()) return;
+      this.setState(st => ({ askInput: '', messages: [...st.messages, { role: 'user', text }] }));
+      setTimeout(() => this.setState(st => ({ messages: [...st.messages, { role: 'agent', text: st.scope === 'all'
+        ? 'This week you committed to the rollback runbook (due Fri) and Datadog contract redlines (due Oct 19). Both are still open.'
+        : 'Decisions: cut over the CPU pools on Oct 22, keep GPU transcoding on the old cluster, and notify the vendor before cutover.', cites: st.scope === 'all' ? [366, 236] : [236, 1260] }] })), 700);
+    };
+    const prompts = ['Summarize decisions', 'What did I commit to this week?', 'Draft Jira issues'].map(l => ({ label: l, onClick: () => ask(l) }));
+
+    const errs = {
+      mic: ['Microphone disconnected at 12:04 — recording continues on the Teams track.', 'Choose another mic'],
+      teams: ['Teams not detected. Capturing whole-system audio instead.', 'Audio settings'],
+      model: ['Model "large-v3-turbo" is missing. Transcription is paused.', 'Download model'],
+      cli: ['Claude Code not found on PATH. Summaries are paused.', 'Set CLI path'],
+    };
+    const e = errs[this.props.errorState ?? 'none'];
+    const elapsedLabel = fmt(s.elapsed);
+    const sugg = [
+      { name: 'Dana Ortiz', conf: '82%', label: 'likely', confColor: 'oklch(0.82 0.1 190)', border: SP.dana.color },
+      { name: 'Sam Lee', conf: '41%', label: 'possible', confColor: '#8b8f98', border: '#4a4d55' },
+      { name: 'Alex Moreau', conf: '12%', label: 'unlikely', confColor: '#6f737c', border: '#3a3d44' },
+    ].map(g => ({ ...g, onClick: this.confirmName }));
+
+    return {
+      groups, nav, meetingCount: String(all.length),
+      notRecording: !s.recording, recording: s.recording, elapsedLabel, pulseDot,
+      startRecording: () => this.setState({ recording: true, elapsed: 0, liveWords: 0, toast: false, screen: 'live', paused: false }),
+      stopRecording: () => this.setState({ recording: false, screen: 'meeting', sel: 'new', tab: 'summary', newMeeting: { id: 'new', group: 'Today', title: 'Cerberus rollout sync', time: 'now', dur: Math.max(1, Math.round(s.elapsed / 60)) + 'm', durLong: fmt(s.elapsed), date: 'Thu, Oct 15, 2026 · just now', status: 'processing', att: ['me', 'marcus', 'dana'] } }),
+      togglePause: () => this.setState({ paused: !s.paused }),
+      goLive: () => this.setState({ screen: 'live' }), goSearch: () => this.setState({ screen: 'search' }),
+      toggleAsk: () => this.setState({ askOpen: !s.askOpen }), askOpen: s.askOpen, askBtnBg: s.askOpen ? '#1d1e22' : 'transparent',
+      showError: !!e, errorMsg: e ? e[0] : '', errorAction: e ? e[1] : '',
+      isMeeting: s.screen === 'meeting', isLive: s.screen === 'live' && s.recording, isActions: s.screen === 'actions', isPeople: s.screen === 'people', isSearch: s.screen === 'search',
+      sel: { ...selM, isProc: selM.status === 'processing' },
+      attendees: selM.att.map(k => { const p = this.sp(k); return { ...p, name: k === 'me' ? 'Jeremie' : p.name }; }),
+      steps: [['Capture', 'done', '100%', 'done'], ['Transcribe', 'active', '64%', '~1m 40s'], ['Identify speakers', 'pending', '0%', '~30s'], ['Summarize', 'pending', '0%', '~45s']].map(([label, st, pct, eta], i) => ({
+        n: String(i + 1), label, pct, eta, color: st === 'pending' ? '#6f737c' : '#e4e5e8', bar: st === 'done' ? '#8b8f98' : '#e4e5e8' })),
+      tabs, tabSummary: s.tab === 'summary', tabTranscript: s.tab === 'transcript', tabActions: s.tab === 'actions', tabNotes: s.tab === 'notes',
+      summary, segments, noSegments: segments.length === 0, speakerFilters,
+      tq: s.tq, onTq: ev => this.setState({ tq: ev.target.value }),
+      needsLabel: !s.named && !s.labelDismissed && s.sel === 'aks', dismissLabel: () => this.setState({ labelDismissed: true }),
+      clips: [{ ts: '01:58', len: '4s' }, { ts: '08:32', len: '6s' }, { ts: '21:00', len: '3s' }],
+      suggestions: sugg, nameInput: s.nameInput, onNameInput: ev => this.setState({ nameInput: ev.target.value }),
+      remember: s.remember, toggleRemember: () => this.setState({ remember: !s.remember }), confirmTyped: this.confirmName,
+      meetingActions,
+      notesLines: [[118, 'GPU pool → keep on old cluster?'], [366, 'me: runbook by Fri'], [905, 'vendor timing — ask Marcus'], [2380, 'Datadog before DNS!']].map(([t, text]) => ({ ts: fmt(t), text, onPlay: () => this.playAt(t) })),
+      togglePlay: () => this.setState({ playing: !s.playing }), playGlyph: s.playing ? '❚❚' : '▶',
+      timeLabel: fmt(s.time), totalLabel: fmt(TOTAL), speeds, skipSilence: s.skipSilence, toggleSkip: () => this.setState({ skipSilence: !s.skipSilence }),
+      lanes, playPct: (s.time / TOTAL * 100) + '%',
+      seek: ev => { const r = ev.currentTarget.getBoundingClientRect(); this.setState({ time: Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * TOTAL }); },
+      liveAtt: ['me', 'marcus', 'dana'].map(k => SP[k]), liveCaps, liveCaptionLine: 'Marcus: ' + shown,
+      liveNotes: s.liveNotes, onLiveNotes: ev => this.setState({ liveNotes: ev.target.value }),
+      bookmarks: s.bookmarks, addBookmark: () => this.setState({ bookmarks: [...s.bookmarks, { ts: elapsedLabel, label: 'Bookmark' }] }),
+      openCount: String(openCount), allActions, bulkLabel: nChecked ? `Send ${nChecked} to Jira` : 'Send to Jira',
+      bulkJira: () => { const st = { ...s.statuses }; ACTIONS.forEach(a => { if (s.checked[a.id] && st[a.id] === 'Open') st[a.id] = 'In Jira'; }); this.setState({ statuses: st, checked: {} }); },
+      people, query: s.query, onQuery: ev => this.setState({ query: ev.target.value }), results, resultCount: String(hits.length), noResults: !!qq && hits.length === 0, searchPeople,
+      scopes: [['meeting', 'This meeting'], ['all', 'All meetings']].map(([k, label]) => ({ label, bg: s.scope === k ? '#26282d' : 'transparent', color: s.scope === k ? '#e4e5e8' : '#8b8f98', onClick: () => this.setState({ scope: k }) })),
+      messages, prompts, askInput: s.askInput, onAskInput: ev => this.setState({ askInput: ev.target.value }),
+      onAskKey: ev => { if (ev.key === 'Enter') ask(s.askInput); }, sendAsk: () => ask(s.askInput),
+      askPlaceholder: s.scope === 'all' ? 'Ask across all meetings' : 'Ask about this meeting',
+      showApproval: s.approval === 'pending', approvalDone: s.approval !== 'pending',
+      approvalNote: s.approval === 'approved' ? '✓ Created PLAT-412, PLAT-413, PLAT-414' : 'Denied — no changes made',
+      approve: () => this.setState({ approval: 'approved', statuses: { ...s.statuses, 1: 'In Jira', 2: 'In Jira', 3: 'In Jira' } }), deny: () => this.setState({ approval: 'denied' }),
+      showToast: s.toast && !s.recording, ignoreToast: () => this.setState({ toast: false }),
+      miniHover: s.miniHover, miniEnter: () => this.setState({ miniHover: true }), miniLeave: () => this.setState({ miniHover: false }),
+      miniWidth: s.miniHover ? '380px' : '340px',
+      meters: [{ label: 'You', w: Math.round(s.levels[0] * 100) + '%' }, { label: 'Teams', w: Math.round(s.levels[1] * 100) + '%' }],
+    };
+  }
+}
+</script>
+</body>
+</html>

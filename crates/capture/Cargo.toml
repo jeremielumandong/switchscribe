@@ -1,0 +1,14 @@
+[package]
+name = "switchscribe-capture"
+description = "switchscribe capture: Teams process loopback, mic, meeting detection (M1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

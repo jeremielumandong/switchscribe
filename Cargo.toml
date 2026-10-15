@@ -1,0 +1,86 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/app",
+    "crates/capture",
+    "crates/pipeline",
+    "crates/speakers",
+    "crates/store",
+    "crates/agent",
+    "crates/integrations",
+]
+exclude = ["vendor/gpui-base", "vendor/gpui-fast"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/jeremielumandong/switchscribe"
+rust-version = "1.97"
+
+[workspace.dependencies]
+# internal
+switchscribe-capture = { path = "crates/capture" }
+switchscribe-pipeline = { path = "crates/pipeline" }
+switchscribe-speakers = { path = "crates/speakers" }
+switchscribe-store = { path = "crates/store" }
+switchscribe-agent = { path = "crates/agent" }
+switchscribe-integrations = { path = "crates/integrations" }
+
+# UI: GPUI Kit 0.7.3 on the application-patched GPUI Fast stack below, the same vendored
+# snapshot as switchhead (and AgentOpsChat). See docs/DECISIONS.md.
+gpui-kit = "=0.7.3"
+
+# Store: SQLite with FTS5, compiled in (`bundled` enables FTS5), so no system SQLite.
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+# serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# errors / logs
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# platform
+directories = "6"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+
+# testing
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+
+[profile.dev]
+# Keep debug builds snappy for the UI: optimize dependencies, not our crates.
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# GPUI Kit 0.7.3 on the application-patched GPUI Fast stack, copied from switchhead's
+# `vendor/` (itself AgentOpsChat's). Local facades keep Kit, Component and Base on one
+# native core; see vendor/gpui-fast/compat/README.md. Update `vendor/` from switchhead
+# rather than editing it here.
+[patch.crates-io]
+gpui-base = { path = "vendor/gpui-base" }
+gpui-pre = { path = "vendor/gpui-fast/compat/gpui-pre" }
+gpui-pre-platform = { path = "vendor/gpui-fast/compat/gpui-pre-platform" }
+gpui-pre-macros = { path = "vendor/gpui-fast/compat/gpui-pre-macros" }
+gpui-pre-sum-tree = { path = "vendor/gpui-fast/compat/gpui-pre-sum-tree" }
+gpui-pre-web = { path = "vendor/gpui-fast/compat/gpui-pre-web" }
+
+[patch."https://github.com/longbridge/gpui-fast"]
+gpui = { path = "vendor/gpui-fast/crates/gpui" }
+gpui_linux = { path = "vendor/gpui-fast/crates/gpui_linux" }

@@ -1,0 +1,14 @@
+[package]
+name = "switchscribe-integrations"
+description = "switchscribe integrations: Outlook calendar, Jira, exports (M5)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+switchscribe-store.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true
