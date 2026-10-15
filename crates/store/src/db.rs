@@ -6,8 +6,8 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension as _, params};
 
 use crate::model::{
-    Meeting, MeetingStatus, NewMeeting, NewSegment, Person, PersonStats, SearchHit, Segment,
-    StoredVoiceprint,
+    Meeting, MeetingStatus, NewMeeting, NewSegment, Person, PersonStats, SearchFilter, SearchHit,
+    Segment, StoredVoiceprint,
 };
 use crate::secret;
 use crate::{Error, Result, io_err};
@@ -80,11 +80,41 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX segments_person ON segments (person_id);
     "#,
+    // 3: summaries (written by the coding CLI), action items, and changes the Ask
+    // panel's agent proposed that wait for the user's approval.
+    r#"
+    CREATE TABLE summaries (
+        meeting_id     TEXT PRIMARY KEY REFERENCES meetings (id) ON DELETE CASCADE,
+        template       TEXT NOT NULL,
+        cli            TEXT NOT NULL,
+        generated_at   INTEGER NOT NULL,
+        body           TEXT NOT NULL
+    );
+    CREATE TABLE action_items (
+        id          INTEGER PRIMARY KEY,
+        meeting_id  TEXT NOT NULL REFERENCES meetings (id) ON DELETE CASCADE,
+        position    INTEGER NOT NULL,
+        text        TEXT NOT NULL,
+        owner_id    INTEGER REFERENCES people (id) ON DELETE SET NULL,
+        owner_name  TEXT,
+        due         TEXT,
+        at_ms       INTEGER NOT NULL,
+        status      TEXT NOT NULL DEFAULT 'open'
+    );
+    CREATE INDEX action_items_meeting ON action_items (meeting_id, position);
+    CREATE TABLE pending_actions (
+        id          INTEGER PRIMARY KEY,
+        tool        TEXT NOT NULL,
+        meeting_id  TEXT REFERENCES meetings (id) ON DELETE CASCADE,
+        payload     TEXT NOT NULL,
+        created_at  INTEGER NOT NULL
+    );
+    "#,
 ];
 
 /// An open index.
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl Store {
@@ -106,6 +136,8 @@ impl Store {
 
     fn init(conn: Connection) -> Result<Store> {
         conn.pragma_update(None, "foreign_keys", true)?;
+        // The MCP server and the app share the file; wait for each other's writes.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let mut store = Store { conn };
         store.migrate()?;
         Ok(store)
@@ -467,6 +499,16 @@ impl Store {
     /// Full-text search over every transcript, best matches first. The query is taken as
     /// plain words (each one a prefix match), never as FTS5 syntax, so any input is safe.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        self.search_with(query, &SearchFilter::default(), limit)
+    }
+
+    /// [`Store::search`], narrowed to one person and/or meetings since a time.
+    pub fn search_with(
+        &self,
+        query: &str,
+        filter: &SearchFilter,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>> {
         let Some(fts) = fts_query(query) else {
             return Ok(Vec::new());
         };
@@ -477,10 +519,20 @@ impl Store {
              JOIN segments s ON s.id = segments_fts.rowid
              JOIN meetings m ON m.id = s.meeting_id
              WHERE segments_fts MATCH ?1
+               AND (?3 IS NULL OR s.person_id = ?3)
+               AND (?4 IS NULL OR m.started_at >= ?4)
+               AND (?5 IS NULL OR m.id = ?5)
              ORDER BY bm25(segments_fts), m.started_at DESC, s.start_ms
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![fts, limit as i64], |r| {
+        let args = params![
+            fts,
+            limit as i64,
+            filter.person,
+            filter.since,
+            filter.meeting.as_deref()
+        ];
+        let rows = stmt.query_map(args, |r| {
             Ok(SearchHit {
                 meeting_id: r.get(0)?,
                 meeting_title: r.get(1)?,

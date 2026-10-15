@@ -136,13 +136,29 @@ impl CliKind {
 }
 
 /// Settings → Agent.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentSettings {
     /// Which CLI.
     pub cli: CliKind,
     /// Its executable; `None` looks up [`CliKind::program`] on `PATH`.
     pub cli_path: Option<PathBuf>,
+    /// Summarize every meeting after it is transcribed.
+    pub auto_summarize: bool,
+    /// The user's own guidance for summary templates, by template key ("planning");
+    /// templates not listed use the built-in guidance.
+    pub templates: std::collections::BTreeMap<String, String>,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            cli: CliKind::default(),
+            cli_path: None,
+            auto_summarize: true,
+            templates: std::collections::BTreeMap::new(),
+        }
+    }
 }
 
 /// Settings → Storage & privacy.

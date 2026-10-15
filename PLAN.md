@@ -94,6 +94,26 @@ Diarization on the Teams track, Name-a-speaker card, People screen, voiceprint m
 MCP server, CLI runner, summary templates, Summary and Action items tabs, Ask panel, FTS
 search filters.
 
+- [x] CLI runner: Claude Code, Codex and Gemini CLI found on PATH (PATHEXT, so `.cmd`
+      shims count), run headless with the prompt on stdin, no console window, a
+      timeout and Stop; the CLI's own sign-in, no API keys.
+- [x] Summaries after every transcription (Settings switch) and on Re-run summary:
+      five templates picked from the title and editable in Settings; the CLI returns
+      JSON whose every line carries a time; owners matched to People; the stepper
+      shows Summarize. Store migration 3: summaries, action items, pending actions.
+- [x] Summary and Action items tabs from the store; status Open/Done (re-runs keep the
+      status of items they keep); the cross-meeting Action items screen with Show done.
+- [x] MCP server, `switchscribe mcp [--ask]` over stdio: list_meetings, get_transcript,
+      get_summary, search_meetings, get_action_items, update_summary,
+      create_jira_issue. Writes from the Ask panel wait as approve/deny cards.
+- [x] Ask panel: this meeting or all meetings, the CLI reads through the MCP server,
+      answers carry timestamp chips that open the moment, Stop, follow-ups keep the
+      conversation; Settings shows the `claude mcp add` line for the user's own CLI.
+- [x] Search filters: person and Past week / Past month.
+- [ ] Real-machine check: on Windows with Claude Code installed through npm
+      (`claude.cmd`), a call summarizes with no console window flashing; Ask answers
+      with chips; Codex and Gemini CLI flags against their current releases.
+
 ## M5 Detection and integrations
 
 Teams auto-detect prompt, Graph calendar, Jira export, Markdown/Word/SRT export.
@@ -124,5 +144,13 @@ Live captions, onboarding, error states, signed installer and auto-update.
 - A Retry action for a failed transcription (today it retries at the next start).
 - Drag the playhead (click-to-seek only today) and keyboard shortcuts for the player
   (space, arrows).
+- Stop and timeouts kill the CLI process, but a `.cmd` shim's child (node) can outlive
+  it on Windows; a job object would take the whole tree.
+- `--demo` in the Ask panel runs a second, separate demo store, so changes the agent
+  proposes there never reach the app's cards (the demo seeds one card instead).
+- `export_meeting` over MCP and real Jira issues for `create_jira_issue` (M5; approving
+  one today says Jira is not connected).
+- Summaries for long meetings: the whole transcript goes in one prompt; split past the
+  CLI's context if three-hour calls show up.
 - Large meetings: the player holds 24 kHz 16-bit audio in memory (about 170 MB an
   hour); stream from the Opus files if long recordings make that a problem.

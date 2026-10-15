@@ -6703,7 +6703,13 @@ dependencies = [
 name = "switchscribe-agent"
 version = "0.0.1"
 dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
  "switchscribe-store",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

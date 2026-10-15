@@ -562,6 +562,9 @@ impl Workspace {
                 }
                 // The user's voiceprint may have grown.
                 self.refresh_library(cx);
+                if self.settings.agent.auto_summarize {
+                    self.queue_summary(id.clone(), cx);
+                }
             }
             Err(e) => {
                 tracing::warn!(meeting = %id, error = %e, "transcription failed");

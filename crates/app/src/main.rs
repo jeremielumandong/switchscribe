@@ -6,6 +6,7 @@
 extern crate gpui_kit as gpui;
 
 mod actions;
+mod agent_view;
 mod appearance;
 mod ask_panel;
 mod assets;
@@ -109,11 +110,40 @@ fn startup(demo: bool) -> Result<Startup> {
     })
 }
 
+/// `switchscribe mcp [--ask] [--demo]`: the MCP server a coding CLI starts, on stdio.
+/// Logs go to stderr, since stdout carries the protocol.
+fn mcp(args: &[String]) -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_env_filter(
+            EnvFilter::try_from_env("SWITCHSCRIBE_LOG").unwrap_or_else(|_| EnvFilter::new("warn")),
+        )
+        .init();
+    let mode = if args.iter().any(|a| a == "--ask") {
+        switchscribe_agent::mcp::Mode::Ask
+    } else {
+        switchscribe_agent::mcp::Mode::Direct
+    };
+    let mut store = if args.iter().any(|a| a == "--demo") {
+        demo::store(chrono::Local::now().date_naive())?
+    } else {
+        let paths = Paths::resolve().context("could not determine a home directory")?;
+        Store::open(&paths.db_file())?
+    };
+    let stdin = std::io::stdin();
+    switchscribe_agent::mcp::serve(&mut store, mode, stdin.lock(), std::io::stdout())?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|a| a == "--version") {
         println!("switchscribe {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
+    }
+    if args.first().is_some_and(|a| a == "mcp") {
+        return mcp(&args[1..]);
     }
     tracing_subscriber::fmt()
         .with_env_filter(

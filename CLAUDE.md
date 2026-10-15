@@ -98,6 +98,13 @@ Nothing depends on `app`.
 - Tests that need real speaker models are skipped unless `SWITCHSCRIBE_TEST_MODELS`
   points at a folder with `pyannote-segmentation-3.0.onnx`,
   `nemo_en_titanet_small.onnx` and sherpa-onnx's `four.wav` test file.
+- `SWITCHSCRIBE_TEST_CLI=claude` (or `codex`, `gemini`) runs the agent test that
+  summarizes through the real, signed-in CLI; skipped otherwise.
+- `switchscribe mcp [--ask] [--demo]` is the MCP server on stdio: stdout carries only
+  JSON-RPC, so log to stderr there.
+- In GPUI, text wraps only inside a block div with a width (`flex_1().min_w_0()`), not
+  as a direct child of a `flex()` row. A scrolling `flex_1` column inside a `flex_col`
+  needs `min_h_0()` on it and its parent, or it grows instead of scrolling.
 - The debug `target/` grows past 20 GB with full debuginfo; if the disk fills, set
   `debug = "line-tables-only"` for the dev and test profiles in `~/.cargo/config.toml`.
 - Capture threads and device listing join COM's MTA on their own threads; never call

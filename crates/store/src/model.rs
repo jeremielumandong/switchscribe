@@ -194,6 +194,17 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
+/// Narrows a search.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchFilter {
+    /// Only lines this person said.
+    pub person: Option<i64>,
+    /// Only meetings that started at or after this, seconds since the epoch.
+    pub since: Option<i64>,
+    /// Only this meeting.
+    pub meeting: Option<String>,
+}
+
 /// The sidebar's date groups.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DateGroup {

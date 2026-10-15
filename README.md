@@ -8,12 +8,12 @@ items that your coding CLI (Claude Code, Codex, Gemini CLI) can query. It is a s
 [switchhead](https://github.com/jeremielumandong/switchhead) and Switchyard and shares
 their GPUI stack and design system.
 
-> Early development. **M0 (skeleton)**, **M1 (capture)**, **M2 (transcription)** and
-> **M3 (speakers)** are in: the app shell, the SQLite store, recording Teams plus your
-> mic to two Opus tracks with a live view, a floating mini recorder and a tray icon,
-> on-device Whisper transcription after the call, an audio player synced to the
-> transcript, and speaker identification with a voiceprint library. Summaries arrive
-> in M4. See
+> Early development. **M0 (skeleton)** through **M4 (agent)** are in: the app shell,
+> the SQLite store, recording Teams plus your mic to two Opus tracks with a live view, a
+> floating mini recorder and a tray icon, on-device Whisper transcription after the
+> call, an audio player synced to the transcript, speaker identification with a
+> voiceprint library, summaries and action items written by your coding CLI, the Ask
+> panel and an MCP server. Calendar, Jira and exports arrive in M5. See
 > [`PLAN.md`](PLAN.md) and the full [build plan](docs/BUILD-PLAN.md).
 
 ![The demo data: a meeting's summary with the Ask panel open](docs/screenshots/demo-summary.png)
@@ -23,6 +23,8 @@ their GPUI stack and design system.
 ![A transcript following playback at 2×](docs/screenshots/transcript-player.png)
 
 ![Naming a speaker: clips, voice-matched suggestions and a name field](docs/screenshots/name-speaker.png)
+
+![The Ask panel: an answer with moments, and a change waiting for approval](docs/screenshots/ask-panel.png)
 
 ## Run it
 
@@ -49,6 +51,20 @@ downloads must stay next to the executable.
 | `SWITCHSCRIBE_ZOOM` | UI zoom, `0.7`–`2.0` |
 | `SWITCHSCRIBE_LOG` | Log filter, e.g. `debug` |
 
+## Your coding CLI
+
+Summaries and the Ask panel run the coding CLI you pick in the title bar (Claude Code,
+Codex or Gemini CLI) headless, with its own sign-in. To ask about meetings from your own
+terminal sessions, add switchscribe as an MCP server (Settings → Agent has the exact
+line):
+
+```bash
+claude mcp add switchscribe -- "<path to switchscribe>" mcp
+```
+
+`switchscribe mcp --ask` makes every write (summary edits, Jira issues) wait for your
+approval in the app.
+
 ## Layout
 
 ```
@@ -70,7 +86,8 @@ Everything stays on your machine: one folder per meeting under the data folder's
 `meetings/` (`mic.opus`, `remote.opus`, `capture.json`, `notes.md`, `transcript.json`,
 `speakers.json`), a SQLite index (`switchscribe.db`, with voiceprints sealed by Windows
 DPAPI) and `settings.json`. The only thing that
-ever leaves is transcript text you send to your chosen CLI's model for summaries.
+ever leaves is transcript text your chosen CLI sends to its model for summaries and
+answers (a CLI running a local model keeps even that here).
 
 ## License
 

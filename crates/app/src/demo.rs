@@ -5,7 +5,9 @@
 
 use chrono::{Days, Local, NaiveDate, NaiveTime, TimeZone as _};
 use switchscribe_pipeline::identify::{Cluster, SpeakersFile};
-use switchscribe_store::{MeetingStatus, NewMeeting, NewSegment, Store, StoredVoiceprint};
+use switchscribe_store::{
+    Bullet, MeetingStatus, NewActionItem, NewMeeting, NewSegment, Store, StoredVoiceprint, Summary,
+};
 
 /// Whether this run shows the demo data.
 pub fn requested(args: &[String]) -> bool {
@@ -15,28 +17,6 @@ pub fn requested(args: &[String]) -> bool {
 
 /// The demo meeting with a transcript, summary and notes.
 pub const FEATURED: &str = "aks";
-
-/// One bullet in a summary section: text, the owner's person index into [`PEOPLE`] for
-/// action items, and the moment it came from (seconds).
-pub struct Bullet {
-    pub text: &'static str,
-    pub owner: Option<usize>,
-    pub at: i64,
-}
-
-/// A summary section.
-pub struct Section {
-    pub title: &'static str,
-    pub items: Vec<Bullet>,
-}
-
-/// An action item: text, owner (index into [`PEOPLE`]), due, the moment.
-pub struct Action {
-    pub text: &'static str,
-    pub owner: usize,
-    pub due: &'static str,
-    pub at: i64,
-}
 
 /// Name, color index; the first is the user.
 pub const PEOPLE: [(&str, u8); 5] = [
@@ -267,6 +247,24 @@ pub fn store(today: NaiveDate) -> switchscribe_store::Result<Store> {
         })
         .collect();
     store.add_segments(FEATURED, &segments)?;
+    let (sum, items) = summary(&ids);
+    store.set_summary(FEATURED, &sum, &items)?;
+    // A finished item from an earlier meeting, for the Action items screen.
+    store.set_summary(
+        "standup",
+        &Summary {
+            template: "standup".into(),
+            cli: "Claude Code".into(),
+            ..Summary::default()
+        },
+        &[NewActionItem {
+            text: "Rotate the staging TLS certificates".into(),
+            owner_id: Some(ids[2]),
+            owner_name: Some(PEOPLE[2].0.into()),
+            due: Some("Today".into()),
+            at_ms: 120_000,
+        }],
+    )?;
     // Everyone but the unnamed speaker has a voiceprint: one axis each.
     for (i, id) in ids.iter().enumerate().skip(1) {
         store.set_voiceprint(&StoredVoiceprint {
@@ -280,6 +278,12 @@ pub fn store(today: NaiveDate) -> switchscribe_store::Result<Store> {
                 .map(|s| (FEATURED.into(), s.0 * 1000, s.0 * 1000 + 5_000)),
         })?;
     }
+    // A change the agent proposed, waiting on the Ask panel's approve/deny card.
+    store.add_pending(
+        "update_summary",
+        Some(FEATURED),
+        r#"{"meeting_id":"aks","open_questions":[{"text":"Do the Cerberus auth tokens survive the ingress split?","at":"02:51"},{"text":"Who approves the rollback runbook?","at":"05:02"},{"text":"Who tells the vendor about the webhook IP change?","at":"21:00"}]}"#,
+    )?;
     Ok(store)
 }
 
@@ -325,17 +329,25 @@ pub fn speakers() -> SpeakersFile {
     }
 }
 
-/// The featured meeting's summary.
-pub fn summary() -> Vec<Section> {
-    let b = |text, at| Bullet {
-        text,
-        owner: None,
-        at,
+/// The featured meeting's summary and action items, as the CLI would have written them.
+fn summary(ids: &[i64]) -> (Summary, Vec<NewActionItem>) {
+    let b = |text: &str, at: i64| Bullet {
+        text: text.into(),
+        at_ms: at * 1000,
     };
-    vec![
-        Section {
-            title: "Summary",
-            items: vec![
+    let item = |text: &str, owner: usize, due: Option<&str>, at: i64| NewActionItem {
+        text: text.into(),
+        owner_id: Some(ids[owner]),
+        owner_name: Some(PEOPLE[owner].0.into()),
+        due: due.map(Into::into),
+        at_ms: at * 1000,
+    };
+    (
+        Summary {
+            template: "planning".into(),
+            cli: "Claude Code".into(),
+            generated_at: 0,
+            summary: vec![
                 b(
                     "Two of three AKS node pools are migrated; the GPU pool is blocked on West Europe quota, expected next Wednesday.",
                     31,
@@ -349,10 +361,7 @@ pub fn summary() -> Vec<Section> {
                     2380,
                 ),
             ],
-        },
-        Section {
-            title: "Decisions",
-            items: vec![
+            decisions: vec![
                 b(
                     "Cut over the two CPU pools on Oct 22; GPU transcoding stays on the old cluster for a week.",
                     236,
@@ -362,21 +371,7 @@ pub fn summary() -> Vec<Section> {
                     1260,
                 ),
             ],
-        },
-        Section {
-            title: "Action items",
-            items: actions()
-                .into_iter()
-                .map(|a| Bullet {
-                    text: a.text,
-                    owner: Some(a.owner),
-                    at: a.at,
-                })
-                .collect(),
-        },
-        Section {
-            title: "Open questions",
-            items: vec![
+            open_questions: vec![
                 b(
                     "Do the Cerberus auth tokens survive the ingress split?",
                     171,
@@ -384,37 +379,28 @@ pub fn summary() -> Vec<Section> {
                 b("Who approves the rollback runbook?", 302),
             ],
         },
-    ]
-}
-
-/// The featured meeting's action items.
-pub fn actions() -> Vec<Action> {
-    vec![
-        Action {
-            text: "Write cutover rollback runbook and share in #platform",
-            owner: 0,
-            due: "Fri",
-            at: 366,
-        },
-        Action {
-            text: "Move EZBook to config-driven Redis endpoint",
-            owner: 1,
-            due: "Tue",
-            at: 640,
-        },
-        Action {
-            text: "Email vendor about webhook IP change",
-            owner: 2,
-            due: "Mon",
-            at: 1810,
-        },
-        Action {
-            text: "Datadog dashboards live on new cluster before DNS",
-            owner: 1,
-            due: "—",
-            at: 2380,
-        },
-    ]
+        vec![
+            item(
+                "Write cutover rollback runbook and share in #platform",
+                0,
+                Some("Fri"),
+                366,
+            ),
+            item(
+                "Move EZBook to config-driven Redis endpoint",
+                1,
+                Some("Tue"),
+                640,
+            ),
+            item("Email vendor about webhook IP change", 2, Some("Mon"), 1810),
+            item(
+                "Datadog dashboards live on new cluster before DNS",
+                1,
+                None,
+                2380,
+            ),
+        ],
+    )
 }
 
 /// The featured meeting's notes: moment, text.
@@ -427,7 +413,8 @@ pub fn notes() -> Vec<(i64, &'static str)> {
     ]
 }
 
-/// The Ask panel's opening exchange: (from the user, text, cited moments).
+/// The Ask panel's opening exchange: (from the user, text, cited moments in
+/// [`FEATURED`], seconds).
 pub fn conversation() -> Vec<(bool, &'static str, Vec<i64>)> {
     vec![
         (true, "What did we decide about the AKS cutover?", vec![]),
@@ -457,5 +444,7 @@ mod tests {
         assert_eq!(groups, DateGroup::ALL);
         assert_eq!(store.segments(FEATURED).unwrap().len(), SEGMENTS.len());
         assert!(!store.search("cutover", 10).unwrap().is_empty());
+        assert_eq!(store.action_items(None).unwrap().len(), 5);
+        assert!(store.summary(FEATURED).unwrap().is_some());
     }
 }

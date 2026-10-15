@@ -152,6 +152,34 @@ Non-obvious calls, newest last. Append when you make one.
   transcript stays with its Teams lines unnamed; transcription never fails because of
   speakers.
 
+## M4 Agent
+
+- **Two ways to talk to the CLI.** Summaries put the transcript in the prompt and read
+  one JSON object back from stdout: one call, no tools, and it works the same with every
+  CLI. Ask goes through the MCP server instead (`switchscribe mcp --ask`, passed to the
+  CLI per run), because a question may need any meeting and the CLI decides what to
+  read. Both run headless with the prompt on stdin, so nothing long or quoted goes on a
+  Windows command line.
+- **Per-CLI flags.** Claude: `-p --output-format text`, plus `--mcp-config <json>
+  --strict-mcp-config --allowedTools mcp__switchscribe` so it sees only our server.
+  Codex: `exec --skip-git-repo-check --output-last-message <file> -c
+  mcp_servers.switchscribe.*` and `-` for stdin. Gemini has no per-run MCP flag, so
+  the run gets its own working folder with `.gemini/settings.json` (trusted). Codex and
+  Gemini were checked against their docs, not run; Claude Code was run end to end.
+- **Finding the CLI:** a PATH search that honours PATHEXT, since npm installs `claude`
+  as `claude.cmd` on Windows. Spawns go through `process::command` (no console).
+- **Writes wait for the user.** In ask mode `update_summary` and `create_jira_issue`
+  only add a row to `pending_actions`; the Ask panel shows it as a card with what would
+  change, and Approve applies it in the app's process. `switchscribe mcp` without
+  `--ask` (the user's own CLI) applies `update_summary` directly but still queues Jira.
+- **Citations** come back as `[[meeting_id@mm:ss]]`, which the panel turns into chips;
+  a malformed one stays as text. Summary lines carry `at` as the transcript's own
+  `mm:ss`, clamped to the meeting.
+- **Owners** match People by full name, else by a first name only one person has.
+- **Re-runs keep status.** Action items whose text is unchanged keep Done.
+- **The user is "you".** The Ask prompt names the user as transcripts show them, so
+  "what did I commit to" works.
+
 ## No console windows (Windows)
 
 - Release builds use the GUI subsystem, so the app itself never opens a console (debug
