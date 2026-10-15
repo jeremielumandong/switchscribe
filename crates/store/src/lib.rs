@@ -17,7 +17,7 @@ pub use model::{
     SearchHit, Segment, StoredVoiceprint, group_by_date,
 };
 pub use paths::Paths;
-pub use settings::{CaptureMode, CliKind, Settings};
+pub use settings::{CaptureMode, CliKind, IntegrationSettings, Settings};
 pub use summary::{ActionItem, ActionStatus, Bullet, NewActionItem, PendingAction, Summary};
 
 /// Errors from the store.

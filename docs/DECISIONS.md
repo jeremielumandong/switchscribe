@@ -189,3 +189,50 @@ Non-obvious calls, newest last. Append when you make one.
   `switchscribe_agent::process::command`, and `clippy.toml` disallows
   `std::process::Command::new` so a direct spawn fails CI. Async runners (M4) wrap the
   same `Command` (`tokio::process::Command::from`) rather than building their own.
+
+## M5 integrations (library)
+
+- **Graph sign-in is the OAuth device code flow.** switchscribe is a public client: it
+  cannot keep a client secret, and a localhost redirect listener is fragile on locked-down
+  work laptops (firewall prompts, blocked ports). With device code the app shows a short
+  code, the user signs in at `microsoft.com/devicelogin` in any browser (MFA and
+  conditional access included), and the app polls the token endpoint every `interval`
+  seconds (`slow_down` adds 5). Scopes: `offline_access Calendars.Read User.Read`.
+- **The client id is the user's own app registration.** We ship no multi-tenant app id:
+  most tenants need admin consent for a third-party app, while a user (or their IT) can
+  register a single-tenant public client ("Allow public client flows" on, delegated
+  `Calendars.Read` + `User.Read`) and paste its id into Settings. Tenant defaults to
+  `organizations`. Tokens are sealed in the store's `secrets` table (DPAPI on Windows),
+  never in `settings.json`; only the client id, tenant and account name are settings.
+- **ICS is the fallback** (risk table: Graph needs admin consent). An Outlook "Publish
+  calendar" link (`webcal://` mapped to `https://`) is fetched and parsed by a small
+  hand-written parser: unfolding, text unescaping, `CN=` / `mailto:` attendees (rooms and
+  resources dropped), `X-MICROSOFT-SKYPETEAMSMEETINGURL` or a `teams.microsoft.com` link
+  marks a Teams meeting. `TZID` times are read as the machine's local time (Outlook writes
+  Windows zone names; mapping them is not worth it for one's own calendar). **`RRULE` is
+  not expanded:** a recurring series appears once, at its first instance (moved instances
+  with `RECURRENCE-ID` appear on their own). Graph's `calendarView` expands recurrences,
+  so this only limits the fallback.
+- **Matching a meeting to an event:** in progress at the recording's start, or starting
+  within 10 minutes after it; Teams meetings win, then the closest start. All-day and
+  cancelled events are ignored.
+- **Jira descriptions are ADF** (REST v3 requires Atlassian Document Format): the item
+  text, Owner, Due as said (plus the parsed date), "From <meeting> on <date> at mm:ss",
+  the transcript line as a blockquote, and the link back as a paragraph whose text is
+  the URL itself, so it stays readable if Jira strips a non-http link mark. Empty parts
+  are omitted (ADF rejects empty text nodes). When Jira refuses only `duedate` or
+  `assignee` (not on the create screen, or an unassignable user) the issue is created
+  again without them. Assignees are set only for an unambiguous user search (one active
+  human match, or one exact display-name match).
+- **Due dates** are parsed against the meeting's local day: weekday names (and "next" /
+  "this" weekday) mean the next such day strictly after the meeting; "today"/"EOD",
+  "tomorrow"; "end of week" is that week's Friday; "Oct 22" / "22nd of October" (rolled
+  into next year when already past, unless a year is given); ISO dates. Anything else
+  ("next sprint", "soon") sets no `duedate` and stays as text in the description.
+- **.docx is written by hand:** five parts (`[Content_Types].xml`, `_rels/.rels`,
+  `word/document.xml`, its rels and a small `styles.xml` with Title / Heading 1 / List
+  Paragraph) zipped with the `zip` crate. The content is headings and paragraphs, so a
+  generator crate would add weight for nothing; all text is XML-escaped and characters
+  XML 1.0 cannot hold are dropped.
+- **The JSON export is versioned** (`"format": "switchscribe.meeting/1"`); fields are only
+  added. Times are `*_ms` from the meeting start plus `at` as `mm:ss`.

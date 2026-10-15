@@ -111,6 +111,10 @@ pub struct ActionItem {
     pub at_ms: i64,
     /// Where it stands.
     pub status: ActionStatus,
+    /// The Jira issue it became ("OPS-123"), once sent.
+    pub jira_key: Option<String>,
+    /// That issue's web link.
+    pub jira_url: Option<String>,
 }
 
 /// A change the Ask panel's agent asked for, waiting for the user.
@@ -136,7 +140,7 @@ struct Body {
 
 impl Store {
     /// Store a meeting's summary and action items, replacing earlier ones. Action items
-    /// that keep their text keep their status.
+    /// that keep their text keep their status and Jira issue.
     pub fn set_summary(
         &mut self,
         meeting_id: &str,
@@ -163,10 +167,14 @@ impl Store {
                 body
             ],
         )?;
-        let kept: Vec<(String, String)> = {
-            let mut stmt =
-                tx.prepare("SELECT text, status FROM action_items WHERE meeting_id = ?1")?;
-            let rows = stmt.query_map([meeting_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        type Kept = (String, String, Option<String>, Option<String>);
+        let kept: Vec<Kept> = {
+            let mut stmt = tx.prepare(
+                "SELECT text, status, jira_key, jira_url FROM action_items WHERE meeting_id = ?1",
+            )?;
+            let rows = stmt.query_map([meeting_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?;
             rows.collect::<rusqlite::Result<_>>()?
         };
         tx.execute(
@@ -174,14 +182,15 @@ impl Store {
             [meeting_id],
         )?;
         for (i, item) in items.iter().enumerate() {
-            let status = kept
-                .iter()
-                .find(|(t, _)| *t == item.text)
-                .map_or("open", |(_, s)| s.as_str());
+            let prev = kept.iter().find(|(t, ..)| *t == item.text);
+            let status = prev.map_or("open", |(_, s, ..)| s.as_str());
+            let (jira_key, jira_url) =
+                prev.map_or((None, None), |(_, _, k, u)| (k.as_deref(), u.as_deref()));
             tx.execute(
                 "INSERT INTO action_items
-                 (meeting_id, position, text, owner_id, owner_name, due, at_ms, status)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 (meeting_id, position, text, owner_id, owner_name, due, at_ms, status,
+                  jira_key, jira_url)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     meeting_id,
                     i as i64,
@@ -190,7 +199,9 @@ impl Store {
                     item.owner_name,
                     item.due,
                     item.at_ms,
-                    status
+                    status,
+                    jira_key,
+                    jira_url
                 ],
             )?;
         }
@@ -226,7 +237,7 @@ impl Store {
     pub fn action_items(&self, meeting_id: Option<&str>) -> Result<Vec<ActionItem>> {
         let mut stmt = self.conn.prepare(
             "SELECT a.id, a.meeting_id, m.title, m.started_at, a.text, a.owner_id,
-                    a.owner_name, a.due, a.at_ms, a.status
+                    a.owner_name, a.due, a.at_ms, a.status, a.jira_key, a.jira_url
              FROM action_items a JOIN meetings m ON m.id = a.meeting_id
              WHERE ?1 IS NULL OR a.meeting_id = ?1
              ORDER BY m.started_at DESC, a.position",
@@ -244,6 +255,8 @@ impl Store {
                 due: r.get(7)?,
                 at_ms: r.get(8)?,
                 status: ActionStatus::parse(&status),
+                jira_key: r.get(10)?,
+                jira_url: r.get(11)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -254,6 +267,15 @@ impl Store {
         self.conn.execute(
             "UPDATE action_items SET status = ?2 WHERE id = ?1",
             params![id, status.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Record the Jira issue an action item became, and mark it [`ActionStatus::InJira`].
+    pub fn set_action_jira(&self, id: i64, key: &str, url: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE action_items SET jira_key = ?2, jira_url = ?3, status = ?4 WHERE id = ?1",
+            params![id, key, url, ActionStatus::InJira.as_str()],
         )?;
         Ok(())
     }
@@ -350,6 +372,29 @@ mod tests {
         let st: Vec<(&str, ActionStatus)> =
             items.iter().map(|i| (i.text.as_str(), i.status)).collect();
         assert_eq!(st, [("b", ActionStatus::Done), ("c", ActionStatus::Open)]);
+    }
+
+    #[test]
+    fn jira_links_survive_a_rerun() {
+        let mut s = store();
+        let sum = Summary::default();
+        s.set_summary("m", &sum, &[item("a"), item("b")]).unwrap();
+        let items = s.action_items(Some("m")).unwrap();
+        assert_eq!(items[0].jira_key, None);
+        s.set_action_jira(items[0].id, "OPS-7", "https://x.atlassian.net/browse/OPS-7")
+            .unwrap();
+        let a = &s.action_items(Some("m")).unwrap()[0];
+        assert_eq!(a.status, ActionStatus::InJira);
+        assert_eq!(a.jira_key.as_deref(), Some("OPS-7"));
+        // Same text keeps the issue; new text starts without one.
+        s.set_summary("m", &sum, &[item("a"), item("c")]).unwrap();
+        let items = s.action_items(Some("m")).unwrap();
+        assert_eq!(items[0].status, ActionStatus::InJira);
+        assert_eq!(
+            items[0].jira_url.as_deref(),
+            Some("https://x.atlassian.net/browse/OPS-7")
+        );
+        assert_eq!(items[1].jira_key, None);
     }
 
     #[test]

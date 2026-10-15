@@ -6753,8 +6753,16 @@ dependencies = [
 name = "switchscribe-integrations"
 version = "0.0.1"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "percent-encoding",
  "serde",
+ "serde_json",
  "switchscribe-store",
+ "thiserror 2.0.21",
+ "tracing",
+ "ureq 3.4.2",
+ "zip",
 ]
 
 [[package]]
