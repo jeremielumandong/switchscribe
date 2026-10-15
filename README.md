@@ -43,7 +43,10 @@ Download `switchscribe-setup-<version>-x64.exe` from
 [Releases](https://github.com/jeremielumandong/switchscribe/releases) and run it. It
 installs for your account only (no admin rights), can start with Windows in the tray, and
 updates itself from the title bar's Update button. Uninstalling keeps your data folder.
-Cutting a release is described in [`installer/README.md`](installer/README.md).
+
+Releases also carry a universal macOS `.dmg` and a Linux `.AppImage`. Recording is
+Windows-only for now; on macOS and Linux switchscribe opens, plays, transcribes and searches
+meetings. Cutting a release is described in [`packaging/README.md`](packaging/README.md).
 
 ## Run it
 

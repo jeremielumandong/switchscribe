@@ -162,12 +162,19 @@ Live captions, onboarding, error states, signed installer and auto-update.
 - [x] Installer: Inno Setup, per user, no admin; Start with Windows (`--background`
       opens to the tray); `switchscribe://` registered; uninstall keeps the data folder.
 - [x] Release workflow on `v*` tags: release build, optional signing (PFX or Azure
-      Trusted Signing), installer plus `.sha256`, GitHub release.
+      Trusted Signing), installer plus `.sha256`, GitHub release. (Replaced by the
+      three-platform pipeline below.)
 - [x] Updates: a check every six hours (Settings → Updates, or off), Update button in the
       title bar, download with SHA-256 check, silent install and restart.
 - [x] Keep audio: Forever / 7 / 30 / 90 days, enforced for finished meetings at start.
-- [ ] Real-machine check: cut `v0.1.0` (bump the version, tag, push) and install on a
-      fresh Windows machine; setup through to the first recorded meeting without help.
+- [x] Release pipeline for Windows, macOS and Linux, the same as Switchyard's (see
+      `packaging/README.md`): Bump version PR, three release workflows on `main` into one
+      draft release; Inno installer, universal DMG, AppImage.
+- [ ] Real-machine check: cut `v0.1.0` (Bump version, then the three release workflows,
+      then publish the draft) and install on a fresh Windows machine; setup through to
+      the first recorded meeting without help.
+- [ ] Real-machine check: open the macOS DMG and the Linux AppImage on a clean machine;
+      the demo and transcription of an imported meeting work.
 - [ ] Real-machine check: live captions keep up on a laptop CPU with Base during a real
       call; the mini recorder grows on hover.
 - [ ] Real-machine check: install `v0.1.1` over it from the Update button; the app
@@ -180,14 +187,15 @@ Live captions, onboarding, error states, signed installer and auto-update.
   counts grow; M0 renders them as plain scroll views.
 - Command palette (Ctrl+K) from switchhead's `palette.rs`.
 - Port switchhead's rotating log file and crash reports.
-- Windows icon resource (switchhead's `build.rs`) once there is an icon.
+- Windows icon resource (switchhead's `build.rs`): the icon now exists
+  (`packaging/icons/switchscribe.ico`); the exe itself still has none.
 - Global hotkeys (Ctrl+Shift+R / Ctrl+Shift+B work only while a switchscribe window
   has focus); `global-hotkey` would make them system-wide.
 - Mini recorder: snap to screen edges.
 - Settings: a test recording with playback (onboarding has a meter test only).
 - Verify the update installer's Authenticode signature before running it
   (`WinVerifyTrust`, signer matching the running exe) and refuse unsigned updates once
-  releases are signed; sign the embedded uninstaller (Inno `SignTool=`).
+  releases are signed.
 - Decide whether a GPU (Vulkan) build ships alongside the CPU one.
 - Live captions: a vocabulary prompt (glossary, attendees) and showing who on the Teams
   track speaks (live diarization).
@@ -217,3 +225,7 @@ Live captions, onboarding, error states, signed installer and auto-update.
   CLI's context if three-hour calls show up.
 - Large meetings: the player holds 24 kHz 16-bit audio in memory (about 170 MB an
   hour); stream from the Opus files if long recordings make that a problem.
+- Ship sherpa-onnx's and onnxruntime's license notices with the packages (Geist's and
+  switchscribe's are bundled).
+- Capture on macOS (ScreenCaptureKit / Core Audio taps) and Linux (PipeWire); the release
+  packages build there today without it.

@@ -1,231 +1,79 @@
-name: Release
-
-# Builds the Windows installer, signs it when signing secrets exist, and publishes a
-# GitHub release with the installer and its .sha256 sidecar (what the in-app update
-# checker in crates/integrations/src/update.rs reads). See installer/README.md.
+name: Linux release package
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to release, without the v (must match Cargo.toml)"
-        required: true
-        type: string
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  # Shared with Windows and macOS: GitHub can create duplicate drafts for the same tag.
+  group: shared-release
   cancel-in-progress: false
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  windows:
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: pwsh
+  package:
+    if: github.ref == 'refs/heads/main'
+    # The oldest supported runner: glibc is not bundled, so this sets the minimum distro.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      actions: read
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Version matches Cargo.toml
-        id: version
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
-            $version = $env:INPUT_VERSION.Trim().TrimStart('v')
-          } else {
-            $version = $env:GITHUB_REF_NAME -replace '^v', ''
-          }
-          if ($version -notmatch '^\d+\.\d+\.\d+$') {
-            Write-Output "::error::'$version' is not X.Y.Z (the installer and the update checker need a plain version)"
-            exit 1
-          }
-          # The version under [workspace.package] in the root Cargo.toml.
-          $toml = Get-Content Cargo.toml -Raw
-          $section = [regex]::Match($toml, '(?ms)^\[workspace\.package\]\s*$(.*?)(?=^\[|\z)')
-          $cargo = [regex]::Match($section.Groups[1].Value, '(?m)^\s*version\s*=\s*"([^"]+)"').Groups[1].Value
-          if ($cargo -ne $version) {
-            Write-Output "::error file=Cargo.toml::Release version $version does not match [workspace.package] version '$cargo'. Bump Cargo.toml, commit, and tag v<version>."
-            exit 1
-          }
-          "version=$version" >> $env:GITHUB_OUTPUT
-          "tag=v$version" >> $env:GITHUB_OUTPUT
-          Write-Output "Releasing switchscribe $version"
-
-      - name: Signing method
-        id: signing
-        env:
-          CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
-          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          TS_ENDPOINT: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
-          TS_ACCOUNT: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
-          TS_PROFILE: ${{ vars.TRUSTED_SIGNING_PROFILE }}
-        run: |
-          if ($env:CERT_PFX -and $env:CERT_PASSWORD) {
-            $method = 'pfx'
-          } elseif ($env:AZURE_TENANT_ID -and $env:AZURE_CLIENT_ID -and $env:AZURE_CLIENT_SECRET -and $env:TS_ENDPOINT -and $env:TS_ACCOUNT -and $env:TS_PROFILE) {
-            $method = 'azure'
-          } else {
-            $method = 'none'
-            Write-Output "::warning::No signing secrets: building an UNSIGNED installer. Windows SmartScreen will warn users. Set WINDOWS_CERT_PFX + WINDOWS_CERT_PASSWORD, or the Azure Trusted Signing secrets and variables (installer/README.md)."
-          }
-          "method=$method" >> $env:GITHUB_OUTPUT
-          Write-Output "Signing: $method"
-
-      - uses: dtolnay/rust-toolchain@1.98.1
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          shared-key: release
-
-      - name: Build
-        run: cargo build --release --locked -p switchscribe-app
-
-      - name: Stage dist
-        run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target\release\switchscribe.exe dist\
-          # sherpa-onnx's shared libraries (and anything else the build copied next to
-          # the exe) must ship beside it.
-          Get-ChildItem target\release -Filter *.dll -File | Copy-Item -Destination dist\
-          Get-ChildItem dist | Format-Table Name, Length
-
-      - name: Locate signtool
-        if: steps.signing.outputs.method == 'pfx'
-        id: signtool
-        run: |
-          $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
-          $tool = Get-ChildItem $kits -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
-            Where-Object { $_.Directory.Name -eq 'x64' -and $_.Directory.Parent.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
-            Sort-Object { [version]$_.Directory.Parent.Name } -Descending |
-            Select-Object -First 1
-          if (-not $tool) {
-            $tool = Get-Command signtool.exe -ErrorAction SilentlyContinue | ForEach-Object { Get-Item $_.Source }
-          }
-          if (-not $tool) {
-            Write-Output "::error::signtool.exe not found under $kits"
-            exit 1
-          }
-          Write-Output "signtool: $($tool.FullName)"
-          "path=$($tool.FullName)" >> $env:GITHUB_OUTPUT
-
-      - name: Decode certificate
-        if: steps.signing.outputs.method == 'pfx'
+          persist-credentials: false
+      - name: Require passing CI for this exact commit
         env:
-          CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          $pfx = Join-Path $env:RUNNER_TEMP 'switchscribe-signing.pfx'
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String(($env:CERT_PFX -replace '\s', '')))
-
-      - name: Sign the app (certificate)
-        if: steps.signing.outputs.method == 'pfx'
+          gh api "repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&branch=main&event=push&per_page=1" > /tmp/ci-runs.json
+          python3 - <<'PY'
+          import json
+          runs = json.load(open('/tmp/ci-runs.json'))['workflow_runs']
+          if not runs or runs[0]['conclusion'] != 'success':
+              raise SystemExit('Release blocked: the latest main-branch CI run for this commit must pass first.')
+          PY
+      - name: Check shared draft release
         env:
-          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-          SIGNTOOL: ${{ steps.signtool.outputs.path }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/upload-release-assets.py linux --check
+      - name: GPUI and packaging libraries
         run: |
-          $pfx = Join-Path $env:RUNNER_TEMP 'switchscribe-signing.pfx'
-          & $env:SIGNTOOL sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d switchscribe dist\switchscribe.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Sign the app (Azure Trusted Signing)
-        if: steps.signing.outputs.method == 'azure'
-        uses: azure/trusted-signing-action@v0
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev \
+            libfontconfig1-dev libfreetype-dev libxcb1-dev libx11-xcb-dev libssl-dev \
+            libasound2-dev cmake
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          endpoint: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.TRUSTED_SIGNING_PROFILE }}
-          files-folder: ${{ github.workspace }}\dist
-          files-folder-filter: exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-
-      - name: Install Inno Setup
-        run: choco install innosetup -y --no-progress
-
-      - name: Build the installer
+          toolchain: '1.98.1'
+      - name: Build the AppImage
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          CARGO_BUILD_JOBS: '2'
+          CARGO_INCREMENTAL: '0'
+        run: bash packaging/linux/build-appimage.sh
+      - name: Check the packaged executables
         run: |
-          $iscc = @(
-            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
-            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $iscc) {
-            Write-Output "::error::ISCC.exe not found after installing Inno Setup"
-            exit 1
-          }
-          $dist = (Resolve-Path dist).Path
-          & $iscc "/DAppVersion=$env:VERSION" "/DSourceDir=$dist" "/Oout" installer\switchscribe.iss
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $installer = "out\switchscribe-setup-$env:VERSION-x64.exe"
-          if (-not (Test-Path $installer)) {
-            Write-Output "::error::$installer was not produced"
-            exit 1
-          }
-
-      - name: Sign the installer (certificate)
-        if: steps.signing.outputs.method == 'pfx'
+          set -euo pipefail
+          appimage=$(ls dist/switchscribe-*-x86_64.AppImage)
+          work=$(mktemp -d)
+          (cd "$work" && "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null)
+          "$work/squashfs-root/AppRun" --version
+          test -s "$work/squashfs-root/switchscribe.png"
+          # sherpa-onnx's libraries ship beside the binary and resolve from there.
+          ldd "$work/squashfs-root/usr/bin/switchscribe" | tee "$work/ldd.txt"
+          grep -q 'libsherpa-onnx-c-api.so => .*squashfs-root/usr/bin/' "$work/ldd.txt"
+          ! grep -q 'not found' "$work/ldd.txt"
+          rm -rf "$work"
+      - name: Write checksum
+        run: |
+          cd dist
+          for f in switchscribe-*-x86_64.AppImage; do sha256sum "$f" > "$f.sha256"; done
+      - name: Upload Linux assets to shared draft release
         env:
-          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-          SIGNTOOL: ${{ steps.signtool.outputs.path }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          $pfx = Join-Path $env:RUNNER_TEMP 'switchscribe-signing.pfx'
-          & $env:SIGNTOOL sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "switchscribe setup" "out\switchscribe-setup-$env:VERSION-x64.exe"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Sign the installer (Azure Trusted Signing)
-        if: steps.signing.outputs.method == 'azure'
-        uses: azure/trusted-signing-action@v0
-        with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          endpoint: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.TRUSTED_SIGNING_PROFILE }}
-          files-folder: ${{ github.workspace }}\out
-          files-folder-filter: exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-
-      - name: Remove the certificate
-        if: always() && steps.signing.outputs.method == 'pfx'
-        run: Remove-Item (Join-Path $env:RUNNER_TEMP 'switchscribe-signing.pfx') -Force -ErrorAction SilentlyContinue
-
-      - name: Checksum
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          # After signing: the hash covers the file users download.
-          $installer = "out\switchscribe-setup-$env:VERSION-x64.exe"
-          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
-          # Just the hash, no newline or BOM.
-          [IO.File]::WriteAllText((Resolve-Path out).Path + "\switchscribe-setup-$env:VERSION-x64.exe.sha256", $hash)
-          Write-Output "SHA-256 $hash"
-
-      - name: Publish the release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: switchscribe ${{ steps.version.outputs.version }}
-          target_commitish: ${{ github.sha }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
-            out/switchscribe-setup-${{ steps.version.outputs.version }}-x64.exe
-            out/switchscribe-setup-${{ steps.version.outputs.version }}-x64.exe.sha256
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/upload-release-assets.py linux

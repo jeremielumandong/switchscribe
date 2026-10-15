@@ -105,9 +105,11 @@ Nothing depends on `app`.
 - `SWITCHSCRIBE_ONBOARDING=1` shows first-run setup (also in the demo); `=0` hides it.
   Live captions in the demo or with fake audio read the demo transcript back, since
   Whisper hears nothing in synthetic voices.
-- Releases: bump `[workspace.package] version`, tag `vX.Y.Z`, push; the Release workflow
-  builds the installer (see `installer/README.md`). `--background` starts hidden in the
-  tray on Windows.
+- Releases (same pipeline as Switchyard; see `packaging/README.md`): run Bump version and
+  merge its PR, then on `main` after CI passes run the Windows, macOS and Linux release
+  workflows; they fill one draft release, which you publish. Keep the Windows asset name
+  `switchscribe-setup-<version>-x64.exe` (the updater looks for it). `--background` starts
+  hidden in the tray on Windows.
 - One switchscribe runs per data folder: a second launch hands over to the first through
   `instance.port` and exits. Give each test run its own `SWITCHSCRIBE_DATA`.
 - `SWITCHSCRIBE_TEST_CLI=claude` (or `codex`, `gemini`) runs the agent test that
