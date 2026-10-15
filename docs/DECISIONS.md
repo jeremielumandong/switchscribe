@@ -118,3 +118,13 @@ Non-obvious calls, newest last. Append when you make one.
 - **Following playback:** the transcript's rows sit directly in the scroll container so
   the active row can be scrolled into view by index; it only follows while playing, so
   it never fights the user's own scrolling.
+
+## No console windows (Windows)
+
+- Release builds use the GUI subsystem, so the app itself never opens a console (debug
+  builds keep one for logs). A GUI-subsystem app that starts a console program (the
+  coding CLI in M4, `git`, `explorer`) gets a new console window per spawn unless the
+  spawn passes `CREATE_NO_WINDOW`. All spawns go through
+  `switchscribe_agent::process::command`, and `clippy.toml` disallows
+  `std::process::Command::new` so a direct spawn fails CI. Async runners (M4) wrap the
+  same `Command` (`tokio::process::Command::from`) rather than building their own.

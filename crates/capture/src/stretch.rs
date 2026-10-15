@@ -124,8 +124,8 @@ mod tests {
     fn normal_speed_is_the_input_after_the_fade_in() {
         let src = tone(24_000, 220.0);
         let out = render(&src, 1.0);
-        for i in HOP..src.len() - N {
-            assert!((out[i] - sample(&src, i)).abs() < 1e-4, "sample {i}");
+        for (i, o) in out.iter().enumerate().take(src.len() - N).skip(HOP) {
+            assert!((o - sample(&src, i)).abs() < 1e-4, "sample {i}");
         }
     }
 

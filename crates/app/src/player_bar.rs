@@ -278,7 +278,12 @@ pub fn lanes(
 }
 
 /// The player bar.
-pub fn render(ws: &Workspace, pb: &Playback, p: &Palette, cx: &mut Context<Workspace>) -> AnyElement {
+pub fn render(
+    ws: &Workspace,
+    pb: &Playback,
+    p: &Palette,
+    cx: &mut Context<Workspace>,
+) -> AnyElement {
     let pos = pb.position_ms();
     let total = pb.duration_ms().max(1);
     let playing = match &pb.source {
@@ -497,7 +502,11 @@ impl Workspace {
             self.playback = None;
             return;
         };
-        if self.playback.as_ref().is_some_and(|pb| pb.meeting_id == m.id) {
+        if self
+            .playback
+            .as_ref()
+            .is_some_and(|pb| pb.meeting_id == m.id)
+        {
             return;
         }
         let id = m.id.clone();
@@ -528,10 +537,13 @@ impl Workspace {
                 if ws.selected().is_none_or(|m| m.id != id) {
                     return;
                 }
-                ws.playback = Some(match player {
+                let mut pb = match player {
                     Some(p) => Playback::audio(id, p),
                     None => Playback::clock(id, total_ms),
-                });
+                };
+                // Start where the meeting was cued.
+                pb.seek_ms(ws.playhead.max(0) as u64 * 1000);
+                ws.playback = Some(pb);
                 cx.notify();
             });
         })
@@ -663,7 +675,9 @@ mod tests {
     fn lanes_follow_speakers() {
         let segs = [seg(0, 6_000, "You"), seg(6_000, 12_000, "Teams")];
         let white = gpui_kit::white();
-        let l = lanes(&segs, 12_000, &[], |s| (s.speaker_label.clone().into(), white));
+        let l = lanes(&segs, 12_000, &[], |s| {
+            (s.speaker_label.clone().into(), white)
+        });
         assert_eq!(l.len(), 2);
         assert_eq!(l[0].name.as_ref(), "You");
         // The first half of the bars are "You", the second half "Teams".
@@ -672,7 +686,9 @@ mod tests {
         assert!(l[1].bars[BARS / 2..].iter().all(Option::is_some));
         // With audio, heights follow the envelope.
         let env = vec![1.0; BARS];
-        let l = lanes(&segs, 12_000, &env, |s| (s.speaker_label.clone().into(), white));
+        let l = lanes(&segs, 12_000, &env, |s| {
+            (s.speaker_label.clone().into(), white)
+        });
         assert_eq!(l[0].bars[0], Some(1.0));
     }
 

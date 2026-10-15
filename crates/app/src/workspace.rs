@@ -13,9 +13,8 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AnyWindowHandle, AppContext as _, Context, Entity, FocusHandle, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
-    ScrollHandle, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px,
-    svg,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px, svg,
 };
 use switchscribe_capture::{Backend, InputDevice, Recorder, RecorderState, RemoteMode};
 use switchscribe_store::{
@@ -185,10 +184,7 @@ impl Workspace {
             playback: None,
             body_scroll: ScrollHandle::new(),
             following: false,
-            jobs: Jobs {
-                installed: s.installed_models,
-                ..Jobs::default()
-            },
+            jobs: Jobs::new(s.installed_models),
             ask,
             ask_open,
             search_input,

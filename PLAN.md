@@ -100,6 +100,7 @@ Live captions, onboarding, error states, signed installer and auto-update.
 - Echo bleed: match mic segments against the loopback track (M3).
 - GPU builds: a `vulkan` (Windows/Linux) and `cuda` feature pass through to whisper-rs;
   the release pipeline (M6) decides which build ships.
+- A Retry action for a failed transcription (today it retries at the next start).
 - Drag the playhead (click-to-seek only today) and keyboard shortcuts for the player
   (space, arrows).
 - Large meetings: the player holds 24 kHz 16-bit audio in memory (about 170 MB an

@@ -2,6 +2,8 @@
 //! CLI (Claude Code, Codex, Gemini CLI) calls to read and act on meetings, and runs that
 //! CLI with summary templates after every call. There is no built-in LLM.
 
+pub mod process;
+
 pub use switchscribe_store::CliKind;
 
 /// The MCP server's name, as the CLI sees it.
