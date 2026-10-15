@@ -60,6 +60,11 @@ impl Paths {
         self.meetings_dir().join(id)
     }
 
+    /// Downloaded speech models.
+    pub fn models_dir(&self) -> PathBuf {
+        self.data.join("models")
+    }
+
     /// Log files.
     pub fn logs_dir(&self) -> PathBuf {
         self.data.join("logs")

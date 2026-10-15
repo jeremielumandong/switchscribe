@@ -42,6 +42,14 @@ wasapi = "0.26"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 tray-icon = { version = "0.26", default-features = false }
 
+# Speech: whisper.cpp (and its Silero VAD) through whisper-rs, built from source with
+# CMake. GPU backends are opt-in features of the app (`vulkan`, `cuda`).
+whisper-rs = "0.16"
+
+# Model downloads: blocking HTTPS, verified against the server's SHA-256.
+ureq = { version = "3", features = ["platform-verifier"] }
+sha2 = "0.11"
+
 # serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

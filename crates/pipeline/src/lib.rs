@@ -4,7 +4,19 @@
 //! The speech engine and the diarizer sit behind traits so models can be swapped
 //! (whisper-rs, sherpa-onnx, polyvoice) without touching the pipeline.
 
+pub mod job;
+pub mod models;
+pub mod resample;
+pub mod vad;
+#[cfg(feature = "whisper")]
+pub mod whisper;
+
+use std::path::{Path, PathBuf};
+
 use switchscribe_store::NewSegment;
+
+pub use job::{JobInput, TranscriptFile, transcribe_meeting};
+pub use vad::{EnergyVad, Vad};
 
 /// The pipeline's steps, as the meeting view's processing stepper shows them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -39,10 +51,7 @@ impl Step {
     }
 }
 
-/// 16 kHz mono samples, the speech models' input.
-pub type Samples<'a> = &'a [f32];
-
-/// One recognized stretch of speech, times in milliseconds from the track's start.
+/// One recognized stretch of speech, times in milliseconds from the audio's start.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Recognized {
     /// Start.
@@ -53,10 +62,28 @@ pub struct Recognized {
     pub text: String,
 }
 
-/// Speech to text.
+/// How to transcribe.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Options {
+    /// Vocabulary hint (glossary and attendee names), Whisper's initial prompt.
+    pub prompt: String,
+    /// Language code (`en`), or `None` to detect it.
+    pub language: Option<String>,
+}
+
+/// An engine's output for one piece of audio.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Transcribed {
+    /// The recognized speech.
+    pub segments: Vec<Recognized>,
+    /// The language used or detected.
+    pub language: Option<String>,
+}
+
+/// Speech to text on 16 kHz mono audio.
 pub trait SpeechEngine: Send + Sync {
-    /// Transcribe a track. `prompt` is the vocabulary hint (glossary and attendee names).
-    fn transcribe(&self, audio: Samples<'_>, prompt: &str) -> Result<Vec<Recognized>, Error>;
+    /// Transcribe a piece of audio (at most about 30 seconds).
+    fn transcribe(&self, audio: &[f32], opts: &Options) -> Result<Transcribed>;
 }
 
 /// A speaker cluster's span on the Teams track.
@@ -72,8 +99,8 @@ pub struct Turn {
 
 /// Who spoke when, on the Teams track.
 pub trait Diarizer: Send + Sync {
-    /// Split a track into speaker turns.
-    fn diarize(&self, audio: Samples<'_>) -> Result<Vec<Turn>, Error>;
+    /// Split 16 kHz audio into speaker turns.
+    fn diarize(&self, audio: &[f32]) -> Result<Vec<Turn>>;
 }
 
 /// Pipeline errors.
@@ -82,7 +109,53 @@ pub enum Error {
     /// No speech model is installed.
     #[error("no speech model is installed")]
     NoModel,
+    /// A model file could not be loaded.
+    #[error("could not load the model {0}")]
+    Model(String),
+    /// The engine failed.
+    #[error("speech engine: {0}")]
+    Engine(String),
+    /// The meeting has no recorded tracks.
+    #[error("the meeting has no recorded audio")]
+    NoAudio,
+    /// A track could not be read.
+    #[error(transparent)]
+    Audio(#[from] switchscribe_capture::Error),
+    /// A file could not be read or written.
+    #[error("{path}: {source}")]
+    Io {
+        /// The file.
+        path: PathBuf,
+        /// The cause.
+        source: std::io::Error,
+    },
+    /// A download failed.
+    #[error("download failed: {0}")]
+    Download(String),
+    /// A download did not match its checksum.
+    #[error("the download is corrupt (SHA-256 {got}, expected {expected})")]
+    Verify {
+        /// What the server published.
+        expected: String,
+        /// What arrived.
+        got: String,
+    },
+    /// Stopped on request.
+    #[error("cancelled")]
+    Cancelled,
 }
+
+impl Error {
+    fn io(path: &Path, source: std::io::Error) -> Self {
+        Error::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+}
+
+/// Result alias for this crate.
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// Interleave both tracks' segments by start time into one transcript (stable, so the
 /// mic segment comes first on a tie).
