@@ -53,6 +53,14 @@ pub struct Palette {
     pub unknown: Hsla,
     /// Recording, and only recording (oklch 0.63 0.21 25).
     pub rec: Hsla,
+    /// Text on the recording button and the elapsed time (#ffd9d4).
+    pub rec_fg: Hsla,
+    /// The mini recorder's pill (#18191c).
+    pub pill: Hsla,
+    /// The mini recorder's border (#33363c).
+    pub pill_bd: Hsla,
+    /// Empty part of a level meter (#2a2c31).
+    pub meter_bg: Hsla,
     /// Warnings and errors; never red (oklch 0.78 0.14 75).
     pub warn: Hsla,
     /// Warning text (oklch 0.86 0.12 80).
@@ -97,6 +105,10 @@ impl Palette {
             fg4: c(0x5a5e66),
             unknown: c(0x6b6f78),
             rec: c(0xed4042),
+            rec_fg: c(0xffd9d4),
+            pill: c(0x18191c),
+            pill_bd: c(0x33363c),
+            meter_bg: c(0x2a2c31),
             warn: c(0xeba941),
             warn_fg: c(0xfac871),
             stamp: c(0x6ed9d2),

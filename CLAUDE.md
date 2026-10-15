@@ -23,6 +23,7 @@ their GPUI stack and design system.
 cargo build --workspace
 cargo run -p switchscribe-app                # binary: `switchscribe`
 cargo run -p switchscribe-app -- --demo      # prototype data, in memory
+SWITCHSCRIBE_FAKE_AUDIO=1 cargo run -p switchscribe-app   # record synthetic voices
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
@@ -79,6 +80,11 @@ Nothing depends on `app`.
 
 - Linking the app on Linux needs `libxkbcommon-dev` and `libxkbcommon-x11-dev`. GPUI
   renders through Vulkan: under Xvfb install `mesa-vulkan-drivers` (lavapipe).
+- libopus is built from source (`opusic-sys`), so builds need CMake. Windows-only code
+  can be checked from Linux with `rustup target add x86_64-pc-windows-gnu`, the
+  `gcc-mingw-w64-x86-64` package and `cargo clippy --target x86_64-pc-windows-gnu`.
+- Capture threads and device listing join COM's MTA on their own threads; never call
+  WASAPI on the UI thread.
 - Screenshots: `Xvfb :99 -screen 0 1440x900x24 &`, then
   `DISPLAY=:99 SWITCHSCRIBE_DATA=<tmp> switchscribe --demo` and
   `import -window root shot.png` (ImageMagick).

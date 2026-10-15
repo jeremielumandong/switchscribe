@@ -13,6 +13,7 @@ use switchscribe_store::{Meeting, MeetingStatus, Segment};
 use crate::appearance::{rpx, ts};
 use crate::demo;
 use crate::format;
+use crate::recording::{self, NotesDoc};
 use crate::theme::{MONO, Palette};
 use crate::ui::{self, Kind};
 use crate::workspace::{Tab, Workspace};
@@ -44,11 +45,14 @@ pub fn render(ws: &Workspace, m: &Meeting, p: &Palette, cx: &mut Context<Workspa
             p,
         ),
         Tab::Notes if featured => notes(p, cx),
-        Tab::Notes => pending(
-            "No notes",
-            "Notes you take during the call appear here, anchored to their moments (M6).",
-            p,
-        ),
+        Tab::Notes => match &ws.notes_doc {
+            Some((id, doc)) if *id == m.id && !doc.is_empty() => recorded_notes(doc, p, cx),
+            _ => pending(
+                "No notes",
+                "Notes and bookmarks you take in the live view during the call appear here, anchored to their moments.",
+                p,
+            ),
+        },
     };
     let action_count = if featured { demo::actions().len() } else { 0 };
     div()
@@ -191,7 +195,7 @@ fn header(
                 .child(buttons),
         )
         .when(m.status == MeetingStatus::Processing, |d| {
-            d.child(stepper(p))
+            d.child(stepper(ws.demo && m.id == demo::FEATURED, p))
         })
         .child(tabs)
         .into_any_element()
@@ -201,15 +205,19 @@ fn count(n: usize) -> String {
     if n == 0 { String::new() } else { n.to_string() }
 }
 
-/// Capture → Transcribe → Identify speakers → Summarize. M0 shows the layout with
-/// placeholder progress; the pipeline drives it from M2 on.
-fn stepper(p: &Palette) -> AnyElement {
-    let progress = [
-        (1.0, "done"),
-        (0.64, "~1m 40s"),
-        (0.0, "~30s"),
-        (0.0, "~45s"),
-    ];
+/// Capture → Transcribe → Identify speakers → Summarize. The demo shows the prototype's
+/// progress; a real recording has finished capturing and waits for the pipeline (M2).
+fn stepper(featured: bool, p: &Palette) -> AnyElement {
+    let progress = if featured {
+        [
+            (1.0, "done"),
+            (0.64, "~1m 40s"),
+            (0.0, "~30s"),
+            (0.0, "~45s"),
+        ]
+    } else {
+        [(1.0, "done"), (0.0, "queued"), (0.0, ""), (0.0, "")]
+    };
     div()
         .mt(rpx(14.))
         .flex()
@@ -537,5 +545,53 @@ fn notes(p: &Palette, cx: &mut Context<Workspace>) -> AnyElement {
                         .child(text)
                 }),
         )
+        .into_any_element()
+}
+
+/// A recorded meeting's `notes.md`, with `[mm:ss]` anchors as links to their moments, and
+/// its bookmarks.
+fn recorded_notes(doc: &NotesDoc, p: &Palette, cx: &mut Context<Workspace>) -> AnyElement {
+    div()
+        .max_w(rpx(760.))
+        .p(rpx(20.))
+        .flex()
+        .flex_col()
+        .gap(rpx(4.))
+        .font_family(MONO)
+        .text_size(ts::UI)
+        .line_height(rpx(21.))
+        .text_color(p.fg_chip)
+        .children(doc.text.lines().enumerate().map(|(i, line)| {
+            match recording::parse_anchor(line) {
+                Some((at, rest)) => div()
+                    .flex()
+                    .gap(rpx(10.))
+                    .child(
+                        div()
+                            .id(("note", i))
+                            .flex_none()
+                            .text_color(p.stamp)
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| this.cue(at, cx)))
+                            .child(format!("[{}]", format::clock(at))),
+                    )
+                    .child(rest.to_owned()),
+                // Keep blank lines as spacing.
+                None => div().min_h(rpx(21.)).child(line.to_owned()),
+            }
+        }))
+        .when(!doc.bookmarks.is_empty(), |d| {
+            d.child(
+                ui::section_label("Bookmarks", p.fg3)
+                    .mt(rpx(14.))
+                    .font_family(crate::theme::SANS),
+            )
+            .child(div().flex().flex_wrap().gap(rpx(6.)).children(
+                doc.bookmarks.iter().enumerate().map(|(i, &at)| {
+                    ui::stamp(("bookmark", i), at, true, p)
+                        .on_click(cx.listener(move |this, _, _, cx| this.cue(at, cx)))
+                }),
+            ))
+        })
         .into_any_element()
 }

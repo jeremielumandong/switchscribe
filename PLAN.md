@@ -24,10 +24,26 @@ Done when the app opens with an empty meetings list.
 - [x] Empty state (no meetings) and an amber banner if the database cannot be opened.
 - [x] `--demo` loads the prototype's data into an in-memory store.
 
-## M1 Capture
+## M1 Capture ✓ (needs a real-call check on Windows)
 
 Teams process loopback plus mic to two Opus files, device picker, mini recorder, tray
 icon. Done when a 30-minute Teams call records both tracks cleanly.
+
+- [x] Capture crate: WASAPI process loopback of Teams' tree (include-tree), whole-system
+      loopback fallback, mic on the default communications device or the chosen one.
+- [x] Mono 48 kHz Opus in Ogg per track, flushed every second, decoder for M2.
+- [x] Recorder: a thread per track, one clock (silence padded), pause, bookmarks, live
+      levels, notices; a lost track keeps the other recording; `capture.json`.
+- [x] Record / Stop (Ctrl+Shift+R, title bar, empty state), meeting row and folder,
+      `recording` → `processing`, crash recovery at startup.
+- [x] Live view: header with elapsed time, Pause and Stop, track meters, notes editor
+      saved to `notes.md`, bookmarks (Ctrl+Shift+B).
+- [x] Mini recorder: always-on-top pill with pulsing dot, time, You / Teams meters,
+      Bookmark, Quick note, Pause, Stop.
+- [x] Settings: capture mode and microphone picker, saved to `settings.json`.
+- [x] Tray icon mirroring the recorder, with Start / Stop, Show, Quit (Windows).
+- [x] Amber banners for fallbacks and lost devices; `SWITCHSCRIBE_FAKE_AUDIO=1`.
+- [ ] Real-machine check: a 30-minute Teams call on Windows 11 records both tracks.
 
 ## M2 Transcription
 
@@ -58,3 +74,9 @@ Live captions, onboarding, error states, signed installer and auto-update.
 - Command palette (Ctrl+K) from switchhead's `palette.rs`.
 - Port switchhead's rotating log file and crash reports.
 - Windows icon resource (switchhead's `build.rs`) once there is an icon.
+- Global hotkeys (Ctrl+Shift+R / Ctrl+Shift+B work only while a switchscribe window
+  has focus); `global-hotkey` would make them system-wide.
+- Mini recorder: snap to screen edges, and expand on hover with the title and a live
+  caption line (with M6 captions).
+- Settings: a test recording with playback (onboarding, M6).
+- Echo bleed: match mic segments against the loopback track (M2/M3).

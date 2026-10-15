@@ -165,6 +165,33 @@ impl Store {
         Ok(())
     }
 
+    /// Set a meeting's status, for example `Processing` once its recording stops.
+    pub fn set_status(&self, id: &str, status: MeetingStatus) -> Result<()> {
+        self.conn.execute(
+            "UPDATE meetings SET status = ?2 WHERE id = ?1",
+            params![id, status.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Set a meeting's recorded length.
+    pub fn set_duration(&self, id: &str, duration_secs: u32) -> Result<()> {
+        self.conn.execute(
+            "UPDATE meetings SET duration_secs = ?2 WHERE id = ?1",
+            params![id, duration_secs],
+        )?;
+        Ok(())
+    }
+
+    /// Rename a meeting.
+    pub fn rename_meeting(&self, id: &str, title: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE meetings SET title = ?2 WHERE id = ?1",
+            params![id, title],
+        )?;
+        Ok(())
+    }
+
     /// Every meeting, newest first, with its attendees.
     pub fn meetings(&self) -> Result<Vec<Meeting>> {
         let mut stmt = self.conn.prepare(
@@ -444,6 +471,21 @@ mod tests {
         assert_eq!(store.search("gpu po", 10).unwrap().len(), 1);
         assert_eq!(store.search("cut\" (", 10).unwrap().len(), 3);
         assert!(store.search("  ", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn status_duration_and_title_update() {
+        let mut s = Store::open_in_memory().unwrap();
+        let mut m = meeting("rec", 100, vec![]);
+        m.status = MeetingStatus::Recording;
+        s.insert_meeting(&m).unwrap();
+        s.set_status("rec", MeetingStatus::Processing).unwrap();
+        s.set_duration("rec", 1834).unwrap();
+        s.rename_meeting("rec", "Cerberus rollout sync").unwrap();
+        let got = s.meeting("rec").unwrap().unwrap();
+        assert_eq!(got.status, MeetingStatus::Processing);
+        assert_eq!(got.duration_secs, 1834);
+        assert_eq!(got.title, "Cerberus rollout sync");
     }
 
     #[test]

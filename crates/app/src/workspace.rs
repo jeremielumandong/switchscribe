@@ -1,28 +1,33 @@
 //! The main window: title bar, meetings sidebar (260 px), the main pane and the Ask panel
 //! (360 px), laid out like the prototype. The sidebar and the Ask panel collapse.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use chrono::{Local, NaiveDate};
+use chrono::{DateTime, Local, NaiveDate};
 use gpui_kit::component::TitleBar;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState, Position, TextareaState};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, FocusHandle, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Window, div, px, svg,
+    AnyElement, AnyWindowHandle, AppContext as _, Context, Entity, FocusHandle, FontWeight,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px, svg,
 };
+use switchscribe_capture::{Backend, InputDevice, Recorder, RecorderState, RemoteMode};
 use switchscribe_store::{
-    Meeting, MeetingStatus, Paths, Person, SearchHit, Segment, Settings, Store, group_by_date,
+    CaptureMode, Meeting, MeetingStatus, NewMeeting, Paths, Person, SearchHit, Segment, Settings,
+    Store, group_by_date,
 };
 
 use crate::actions;
 use crate::appearance::{rpx, ts};
 use crate::ask_panel::{AskEvent, AskPanel};
-use crate::meeting_view;
+use crate::recording::{self, Banner, NotesDoc, Session};
 use crate::theme::{MONO, Palette, SANS, palette};
 use crate::ui::{self, Kind};
+use crate::{live_view, meeting_view, mini_recorder};
 
 /// The index, shared with background tasks.
 pub type SharedStore = Arc<Mutex<Store>>;
@@ -43,6 +48,8 @@ pub struct Startup {
     pub demo: bool,
     /// Why the database could not be opened, if it could not.
     pub store_error: Option<String>,
+    /// Microphones, default first (empty where capture is unsupported).
+    pub devices: Vec<InputDevice>,
 }
 
 /// The main pane's screens.
@@ -50,6 +57,8 @@ pub struct Startup {
 pub enum Screen {
     /// A meeting, by id.
     Meeting(String),
+    /// The recording in progress.
+    Live,
     /// Nothing recorded yet.
     Empty,
     /// Cross-meeting action items.
@@ -96,6 +105,20 @@ pub struct Workspace {
     search_input: Entity<InputState>,
     search_hits: Vec<SearchHit>,
     search_generation: u64,
+    /// The recording in progress.
+    pub(crate) recording: Option<Session>,
+    /// A recording is being set up.
+    starting: bool,
+    /// Amber notices above the main pane (capture fallbacks, lost devices).
+    banners: Vec<Banner>,
+    /// The selected meeting's notes and bookmarks, read from its folder.
+    pub(crate) notes_doc: Option<(String, NotesDoc)>,
+    devices: Vec<InputDevice>,
+    /// This window, for bringing it forward from the mini recorder and the tray.
+    window: AnyWindowHandle,
+    mini: Option<AnyWindowHandle>,
+    #[cfg(windows)]
+    tray: Option<crate::tray::Tray>,
     focus: FocusHandle,
     _subs: Vec<Subscription>,
 }
@@ -107,6 +130,11 @@ impl Workspace {
         let search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search every meeting"));
         let subs = vec![
+            // Quitting mid-call finishes the files rather than cutting them off.
+            cx.on_app_quit(|this, cx| {
+                this.finish_on_quit(cx);
+                async {}
+            }),
             cx.subscribe_in(&ask, window, |this, _, ev: &AskEvent, _, cx| match ev {
                 AskEvent::Cite(at) => this.cue(*at, cx),
             }),
@@ -145,13 +173,26 @@ impl Workspace {
             search_input,
             search_hits: Vec::new(),
             search_generation: 0,
+            recording: None,
+            starting: false,
+            banners: Vec::new(),
+            notes_doc: None,
+            devices: s.devices,
+            window: window.window_handle(),
+            mini: None,
+            #[cfg(windows)]
+            tray: crate::tray::Tray::new(),
             focus: cx.focus_handle(),
             _subs: subs,
         };
         if this.demo {
             this.playhead = 236;
         }
+        this.focus.focus(window, cx);
         this.load_transcript(cx);
+        this.load_notes(cx);
+        #[cfg(windows)]
+        this.poll_tray(window, cx);
         this
     }
 
@@ -169,12 +210,44 @@ impl Workspace {
     }
 
     fn select(&mut self, id: String, cx: &mut Context<Self>) {
-        if self.screen != Screen::Meeting(id.clone()) {
+        if self.recording.as_ref().is_some_and(|s| s.meeting_id == id) {
+            self.screen = Screen::Live;
+        } else if self.screen != Screen::Meeting(id.clone()) {
             self.screen = Screen::Meeting(id);
             self.playhead = 0;
             self.load_transcript(cx);
+            self.load_notes(cx);
         }
         cx.notify();
+    }
+
+    /// A meeting's folder. Demo recordings go to a temporary folder so the demo never
+    /// touches the data folder.
+    pub(crate) fn meeting_dir(&self, id: &str) -> PathBuf {
+        if self.demo {
+            std::env::temp_dir().join("switchscribe-demo").join(id)
+        } else {
+            self.paths.meeting_dir(id)
+        }
+    }
+
+    /// Read the selected meeting's notes and bookmarks on a background thread.
+    fn load_notes(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.selected().map(|m| m.id.clone()) else {
+            return;
+        };
+        let dir = self.meeting_dir(&id);
+        let task = cx
+            .background_executor()
+            .spawn(async move { NotesDoc::load(&dir) });
+        cx.spawn(async move |this, cx| {
+            let doc = task.await;
+            let _ = this.update(cx, |ws, cx| {
+                ws.notes_doc = Some((id, doc));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn show(&mut self, screen: Screen, window: &mut Window, cx: &mut Context<Self>) {
@@ -301,6 +374,440 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Start recording, or stop the recording in progress.
+    pub(crate) fn toggle_recording(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.recording.is_some() {
+            self.stop_recording(cx);
+        } else {
+            self.start_recording(false, window, cx);
+        }
+    }
+
+    fn backend(&self) -> Result<Backend, String> {
+        if self.demo || recording::fake_audio_requested() {
+            return Ok(Backend::fake());
+        }
+        let mode = match self.settings.audio.capture_mode {
+            CaptureMode::TeamsOnly => RemoteMode::TeamsOnly,
+            CaptureMode::WholeSystem => RemoteMode::WholeSystem,
+        };
+        Backend::system(mode, self.settings.audio.mic_device.clone()).map_err(|e| e.to_string())
+    }
+
+    /// Create the meeting and its folder and start both tracks, off the UI thread.
+    fn start_recording(&mut self, test: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.starting || self.recording.is_some() {
+            return;
+        }
+        self.banners.clear();
+        let backend = match self.backend() {
+            Ok(b) => b,
+            Err(e) => {
+                self.banners.push(Banner::plain(format!(
+                    "Cannot record here: {e}. Set SWITCHSCRIBE_FAKE_AUDIO=1 to try the recorder with synthetic voices."
+                )));
+                cx.notify();
+                return;
+            }
+        };
+        let now = Local::now();
+        let id = recording::meeting_id(now);
+        let title = if test {
+            "Test recording".to_owned()
+        } else {
+            recording::default_title(now)
+        };
+        let dir = self.meeting_dir(&id);
+        let me = self.people.iter().find(|p| p.is_me).cloned();
+        let row = NewMeeting {
+            id: id.clone(),
+            title: title.clone(),
+            started_at: now.timestamp(),
+            duration_secs: 0,
+            source_app: "Teams".into(),
+            status: MeetingStatus::Recording,
+            attendees: me.iter().map(|p| p.id).collect(),
+        };
+        self.starting = true;
+        cx.notify();
+        let store = self.store.clone();
+        let task = cx.background_executor().spawn({
+            let dir = dir.clone();
+            async move {
+                let recorder = Recorder::start(&dir, backend).map_err(|e| e.to_string())?;
+                match store.lock() {
+                    Ok(mut s) => {
+                        if let Err(e) = s.insert_meeting(&row) {
+                            tracing::warn!(error = %e, "could not add the meeting to the index");
+                        }
+                    }
+                    Err(_) => tracing::warn!("the index lock is poisoned"),
+                }
+                Ok::<_, String>(recorder)
+            }
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let started = task.await;
+            let _ = this.update_in(cx, |ws, window, cx| {
+                ws.starting = false;
+                match started {
+                    Ok(recorder) => ws.begin_session(id, title, dir, recorder, me, now, window, cx),
+                    Err(e) => {
+                        ws.banners
+                            .push(Banner::plain(format!("Could not start recording: {e}")));
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn begin_session(
+        &mut self,
+        id: String,
+        title: String,
+        dir: PathBuf,
+        recorder: Recorder,
+        me: Option<Person>,
+        now: DateTime<Local>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let monitor = recorder.monitor();
+        let notes =
+            cx.new(|cx| TextareaState::new(window, cx).placeholder("Notes stay on this machine."));
+        let notes_changed = cx.subscribe(&notes, |this, _, ev: &InputEvent, cx| {
+            if let InputEvent::Change = ev {
+                this.notes_changed(cx);
+            }
+        });
+        // Meters, the clock and notices refresh ten times a second while recording.
+        let tick = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                if this.update(cx, |ws, cx| ws.tick(cx)).is_err() {
+                    break;
+                }
+            }
+        });
+        self.meetings.insert(
+            0,
+            Meeting {
+                id: id.clone(),
+                title: title.clone(),
+                started_at: now.timestamp(),
+                duration_secs: 0,
+                source_app: "Teams".into(),
+                status: MeetingStatus::Recording,
+                attendees: me.into_iter().collect(),
+            },
+        );
+        self.recording = Some(Session {
+            meeting_id: id,
+            title,
+            dir,
+            recorder: Some(recorder),
+            monitor,
+            notes,
+            bookmarks: Vec::new(),
+            notes_generation: 0,
+            _tick: tick,
+            _notes_changed: notes_changed,
+        });
+        self.screen = Screen::Live;
+        // Opened after this update: the new window renders at once and reads the session.
+        let ws = cx.weak_entity();
+        cx.defer(move |cx| {
+            let Some(handle) = mini_recorder::open(ws.clone(), cx) else {
+                return;
+            };
+            let kept = ws.update(cx, |ws, _| {
+                let live = ws.recording.is_some();
+                if live {
+                    ws.mini = Some(handle);
+                }
+                live
+            });
+            if !kept.unwrap_or(false) {
+                mini_recorder::close(handle, cx);
+            }
+        });
+        self.set_tray(RecorderState::Recording);
+        cx.notify();
+    }
+
+    fn tick(&mut self, cx: &mut Context<Self>) {
+        let Some(s) = &self.recording else {
+            return;
+        };
+        for notice in s.monitor.take_notices() {
+            let banner = recording::banner_for(&notice);
+            if !self.banners.contains(&banner) {
+                self.banners.push(banner);
+            }
+        }
+        let (id, secs, paused) = (s.meeting_id.clone(), s.elapsed_secs(), s.paused());
+        if let Some(m) = self.meetings.iter_mut().find(|m| m.id == id) {
+            m.duration_secs = secs as u32;
+        }
+        self.set_tray(if paused {
+            RecorderState::Paused
+        } else {
+            RecorderState::Recording
+        });
+        if let Some(mini) = self.mini {
+            let _ = mini.update(cx, |_, window, _| window.refresh());
+        }
+        cx.notify();
+    }
+
+    /// Pause or resume the recording.
+    pub(crate) fn toggle_pause(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = &self.recording
+            && let Some(r) = &s.recorder
+        {
+            r.set_paused(!s.paused());
+        }
+        self.tick(cx);
+    }
+
+    /// Mark the current moment.
+    pub(crate) fn bookmark(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = &mut self.recording
+            && let Some(r) = &mut s.recorder
+        {
+            let at = r.bookmark();
+            s.bookmarks.push(at);
+            cx.notify();
+        }
+    }
+
+    /// Bring the main window forward on the live view and start a timestamped line in
+    /// the notes.
+    pub(crate) fn quick_note(&mut self, cx: &mut Context<Self>) {
+        let Some(s) = &self.recording else {
+            return;
+        };
+        let line = recording::anchor_line(s.elapsed_secs());
+        let notes = s.notes.clone();
+        self.screen = Screen::Live;
+        cx.notify();
+        let main = self.window;
+        let ws = cx.weak_entity();
+        // Deferred: this may run inside the mini recorder's click handler.
+        cx.defer(move |cx| {
+            let _ = main.update(cx, |_, window, cx| {
+                window.activate_window();
+                notes.update(cx, |state, cx| {
+                    let mut text = state.value().to_string();
+                    if !text.is_empty() && !text.ends_with('\n') {
+                        text.push('\n');
+                    }
+                    text.push_str(&line);
+                    let row = text.matches('\n').count() as u32;
+                    let col =
+                        text.rsplit('\n')
+                            .next()
+                            .map_or(0, |l| l.encode_utf16().count()) as u32;
+                    state.set_value(text, window, cx);
+                    state.set_cursor_position(Position::new(row, col), window, cx);
+                });
+            });
+            let _ = ws.update(cx, |ws, cx| ws.notes_changed(cx));
+        });
+    }
+
+    /// Save the live notes shortly after typing stops.
+    fn notes_changed(&mut self, cx: &mut Context<Self>) {
+        let Some(s) = &mut self.recording else {
+            return;
+        };
+        s.notes_generation += 1;
+        let generation = s.notes_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(600))
+                .await;
+            let _ = this.update(cx, |ws, cx| {
+                let Some(s) = &ws.recording else { return };
+                if s.notes_generation != generation {
+                    return;
+                }
+                let text = s.notes.read(cx).value().to_string();
+                let dir = s.dir.clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        if let Err(e) = recording::save_notes(&dir, &text) {
+                            tracing::warn!(error = %e, "could not save notes");
+                        }
+                    })
+                    .detach();
+            });
+        })
+        .detach();
+    }
+
+    /// Stop recording: finish both tracks, save the notes and mark the meeting for
+    /// processing, off the UI thread.
+    pub(crate) fn stop_recording(&mut self, cx: &mut Context<Self>) {
+        let Some(mut s) = self.recording.take() else {
+            return;
+        };
+        let Some(recorder) = s.recorder.take() else {
+            return;
+        };
+        let notes = s.notes.read(cx).value().to_string();
+        let id = s.meeting_id.clone();
+        let dir = s.dir.clone();
+        drop(s);
+        if let Some(mini) = self.mini.take() {
+            // Deferred: the click may have come from the mini recorder itself.
+            cx.defer(move |cx| mini_recorder::close(mini, cx));
+        }
+        self.set_tray(RecorderState::Processing);
+        if self.screen == Screen::Live {
+            self.screen = Screen::Meeting(id.clone());
+            self.tab = Tab::Notes;
+        }
+        cx.notify();
+        let store = self.store.clone();
+        let task = cx.background_executor().spawn({
+            let id = id.clone();
+            async move {
+                let rec = recorder.stop().map_err(|e| e.to_string())?;
+                if !notes.trim().is_empty()
+                    && let Err(e) = recording::save_notes(&dir, &notes)
+                {
+                    tracing::warn!(error = %e, "could not save notes");
+                }
+                if let Ok(s) = store.lock() {
+                    let secs = (rec.duration_ms / 1000) as u32;
+                    let saved = s
+                        .set_duration(&id, secs)
+                        .and_then(|()| s.set_status(&id, MeetingStatus::Processing));
+                    if let Err(e) = saved {
+                        tracing::warn!(error = %e, "could not update the meeting");
+                    }
+                }
+                Ok::<_, String>(rec)
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let finished = task.await;
+            let _ = this.update(cx, |ws, cx| {
+                match finished {
+                    Ok(rec) => {
+                        if let Some(m) = ws.meetings.iter_mut().find(|m| m.id == id) {
+                            m.duration_secs = (rec.duration_ms / 1000) as u32;
+                            m.status = MeetingStatus::Processing;
+                        }
+                        ws.banners.extend(recording::empty_recording(&rec));
+                    }
+                    Err(e) => ws.banners.push(Banner::plain(format!(
+                        "Could not finish the recording: {e}"
+                    ))),
+                }
+                // Nothing processes recordings until M2.
+                ws.set_tray(RecorderState::Idle);
+                ws.notes_doc = None;
+                ws.load_notes(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The app is quitting: finish the recording in place (blocking, briefly) so both
+    /// files end cleanly.
+    fn finish_on_quit(&mut self, cx: &mut Context<Self>) {
+        let Some(mut s) = self.recording.take() else {
+            return;
+        };
+        let Some(recorder) = s.recorder.take() else {
+            return;
+        };
+        let notes = s.notes.read(cx).value().to_string();
+        match recorder.stop() {
+            Ok(rec) => {
+                if let Ok(store) = self.store.lock() {
+                    let _ = store.set_duration(&s.meeting_id, (rec.duration_ms / 1000) as u32);
+                    let _ = store.set_status(&s.meeting_id, MeetingStatus::Processing);
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "could not finish the recording on quit"),
+        }
+        if !notes.trim().is_empty() {
+            let _ = recording::save_notes(&s.dir, &notes);
+        }
+    }
+
+    fn set_tray(&mut self, state: RecorderState) {
+        #[cfg(windows)]
+        if let Some(tray) = &mut self.tray {
+            tray.set_state(state);
+        }
+        #[cfg(not(windows))]
+        let _ = state;
+    }
+
+    /// Act on tray menu picks.
+    #[cfg(windows)]
+    fn poll_tray(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::tray::TrayCommand;
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
+                let alive = this.update_in(cx, |ws, window, cx| {
+                    let commands = ws.tray.as_ref().map(|t| t.poll()).unwrap_or_default();
+                    for command in commands {
+                        match command {
+                            TrayCommand::ToggleRecording => ws.toggle_recording(window, cx),
+                            TrayCommand::Show => window.activate_window(),
+                            TrayCommand::Quit => cx.quit(),
+                        }
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn set_capture_mode(&mut self, mode: CaptureMode, cx: &mut Context<Self>) {
+        self.settings.audio.capture_mode = mode;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    fn set_mic(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        self.settings.audio.mic_device = id;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    /// List the microphones again, off the UI thread.
+    fn refresh_devices(&mut self, cx: &mut Context<Self>) {
+        let task = cx
+            .background_executor()
+            .spawn(async move { switchscribe_capture::input_devices() });
+        cx.spawn(async move |this, cx| {
+            let devices = task.await;
+            let _ = this.update(cx, |ws, cx| {
+                ws.devices = devices;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn render_title_bar(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let sidebar_open = self.settings.layout.sidebar_open;
         let brand = div()
@@ -350,26 +857,57 @@ impl Workspace {
             .on_click(cx.listener(|this, _, w, cx| this.show(Screen::Search, w, cx)))
             .child(div().flex_1().truncate().child("Search all meetings"))
             .child(ui::kbd("Ctrl+Shift+F", p));
-        let record = ui::button("record", "", Kind::Secondary, p)
-            .occlude()
-            .px(rpx(12.))
-            .bg(p.elev)
-            .text_color(p.fg)
-            .font_weight(FontWeight::MEDIUM)
-            .tooltip(|w, cx| {
-                Tooltip::new("Recording arrives in M1")
-                    .action(&actions::ToggleRecording, None)
-                    .build(w, cx)
-            })
-            .child(
-                div()
-                    .size(rpx(8.))
-                    .rounded_full()
-                    .border(px(1.5))
-                    .border_color(p.fg2),
-            )
-            .child("Record")
-            .child(ui::kbd("Ctrl+Shift+R", p));
+        let record = match &self.recording {
+            // While recording: a red pill with the elapsed time that opens the live view.
+            Some(s) => ui::button("record", "", Kind::Secondary, p)
+                .occlude()
+                .px(rpx(12.))
+                .border_color(p.rec)
+                .bg(p.rec.opacity(0.16))
+                .text_color(p.rec_fg)
+                .font_weight(FontWeight::MEDIUM)
+                .tooltip(|w, cx| {
+                    Tooltip::new("Show the live view")
+                        .action(&actions::ToggleRecording, None)
+                        .build(w, cx)
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.screen = Screen::Live;
+                    cx.notify();
+                }))
+                .child(ui::dot(8., p.rec).opacity(s.pulse()))
+                .child(ui::mono(
+                    crate::format::clock(s.elapsed_secs()),
+                    ts::BODY,
+                    p.rec_fg,
+                )),
+            None => ui::button("record", "", Kind::Secondary, p)
+                .occlude()
+                .px(rpx(12.))
+                .bg(p.elev)
+                .text_color(p.fg)
+                .font_weight(FontWeight::MEDIUM)
+                .when(self.starting, |d| d.opacity(0.6))
+                .tooltip(|w, cx| {
+                    Tooltip::new("Record Teams and your mic")
+                        .action(&actions::ToggleRecording, None)
+                        .build(w, cx)
+                })
+                .on_click(cx.listener(|this, _, w, cx| this.start_recording(false, w, cx)))
+                .child(
+                    div()
+                        .size(rpx(8.))
+                        .rounded_full()
+                        .border(px(1.5))
+                        .border_color(p.fg2),
+                )
+                .child(if self.starting {
+                    "Starting…"
+                } else {
+                    "Record"
+                })
+                .child(ui::kbd("Ctrl+Shift+R", p)),
+        };
         let cli = ui::button("cli", "", Kind::Outline, p)
             .occlude()
             .gap(rpx(6.))
@@ -438,6 +976,7 @@ impl Workspace {
         let groups = group_by_date(&self.meetings, self.today);
         let selected = match &self.screen {
             Screen::Meeting(id) => Some(id.as_str()),
+            Screen::Live => self.recording.as_ref().map(|s| s.meeting_id.as_str()),
             _ => None,
         };
         let list = div()
@@ -638,6 +1177,10 @@ impl Workspace {
                 Some(m) => meeting_view::render(self, m, p, cx),
                 None => self.render_empty(p, cx),
             },
+            Screen::Live => match &self.recording {
+                Some(s) => live_view::render(self, s, p, cx),
+                None => self.render_empty(p, cx),
+            },
             Screen::Empty => self.render_empty(p, cx),
             Screen::ActionItems => self.render_placeholder(
                 "Action items",
@@ -646,51 +1189,67 @@ impl Workspace {
             ),
             Screen::People => self.render_people(p),
             Screen::Search => self.render_search(p, cx),
-            Screen::Settings => self.render_settings(p),
+            Screen::Settings => self.render_settings(p, cx),
         };
+        let mut banners: Vec<Banner> = Vec::new();
+        if let Some(e) = &self.store_error {
+            banners.push(Banner::plain(format!(
+                "Could not open the meetings database ({e}). Nothing is being saved."
+            )));
+        }
+        banners.extend(self.banners.iter().cloned());
         div()
             .flex_1()
             .min_w(rpx(480.))
             .flex()
             .flex_col()
             .bg(p.bg)
-            .when_some(self.store_error.clone(), |d, e| {
-                d.child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap(rpx(10.))
-                        .px(rpx(16.))
-                        .py(rpx(8.))
-                        .bg(p.warn.opacity(0.1))
-                        .border_b_1()
-                        .border_color(p.warn.opacity(0.35))
-                        .text_color(p.warn_fg)
-                        .child(
+            .children(banners.into_iter().enumerate().map(|(i, b)| {
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(rpx(10.))
+                    .px(rpx(16.))
+                    .py(rpx(8.))
+                    .bg(p.warn.opacity(0.1))
+                    .border_b_1()
+                    .border_color(p.warn.opacity(0.35))
+                    .text_color(p.warn_fg)
+                    .child(
+                        div()
+                            .size(rpx(16.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(3.))
+                            .bg(p.warn)
+                            .text_color(p.on_light)
+                            .text_size(ts::SMALL)
+                            .font_weight(FontWeight::BOLD)
+                            .child("!"),
+                    )
+                    .child(div().flex_1().min_w_0().child(b.text))
+                    .when_some(b.action, |d, (label, screen)| {
+                        d.child(
                             div()
-                                .size(rpx(16.))
-                                .flex_none()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(3.))
-                                .bg(p.warn)
-                                .text_color(p.on_light)
-                                .text_size(ts::SMALL)
-                                .font_weight(FontWeight::BOLD)
-                                .child("!"),
+                                .id(("banner-action", i))
+                                .text_size(ts::BODY)
+                                .underline()
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, w, cx| {
+                                    this.show(screen.clone(), w, cx)
+                                }))
+                                .child(label),
                         )
-                        .child(div().flex_1().child(format!(
-                            "Could not open the meetings database ({e}). Nothing is being saved."
-                        ))),
-                )
-            })
+                    })
+            }))
             .child(content)
             .into_any_element()
     }
 
-    fn render_empty(&self, p: &Palette, _cx: &mut Context<Self>) -> AnyElement {
+    fn render_empty(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         ui::empty_state(
             "No meetings yet",
             "Record a Teams meeting and switchscribe keeps the audio, transcript and notes on this machine.",
@@ -705,7 +1264,9 @@ impl Workspace {
                 .child(
                     ui::button("empty-record", "Record", Kind::Primary, p)
                         .px(rpx(12.))
-                        .tooltip(|w, cx| Tooltip::new("Recording arrives in M1").build(w, cx)),
+                        .on_click(
+                            cx.listener(|this, _, w, cx| this.start_recording(false, w, cx)),
+                        ),
                 )
                 .child(
                     div()
@@ -713,7 +1274,7 @@ impl Workspace {
                         .text_size(ts::BODY)
                         .text_color(p.stamp)
                         .cursor_pointer()
-                        .tooltip(|w, cx| Tooltip::new("Recording arrives in M1").build(w, cx))
+                        .on_click(cx.listener(|this, _, w, cx| this.start_recording(true, w, cx)))
                         .child("Start a test recording"),
                 ),
         )
@@ -933,11 +1494,12 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn render_settings(&self, p: &Palette) -> AnyElement {
+    fn render_settings(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let s = &self.settings;
-        let row = |label: &'static str, value: String| {
+        let row = |label: &'static str, value: AnyElement| {
             div()
                 .flex()
+                .items_start()
                 .gap(rpx(12.))
                 .py(rpx(8.))
                 .border_b_1()
@@ -951,14 +1513,121 @@ impl Workspace {
                 )
                 .child(div().flex_1().min_w_0().text_color(p.text).child(value))
         };
-        let on = |b: bool| if b { "On" } else { "Off" }.to_owned();
+        let text = |t: String| div().child(t).into_any_element();
+        let on = |b: bool| text(if b { "On" } else { "Off" }.to_owned());
+
+        // Audio: the capture mode as a two-way toggle, the microphone as a radio list.
+        let mode = s.audio.capture_mode;
+        let modes = div()
+            .flex()
+            .gap(px(2.))
+            .p(px(2.))
+            .rounded(px(6.))
+            .bg(p.chip)
+            .children(
+                [
+                    (CaptureMode::TeamsOnly, "Teams only"),
+                    (CaptureMode::WholeSystem, "Whole system"),
+                ]
+                .map(|(m, label)| {
+                    let active = m == mode;
+                    div()
+                        .id(label)
+                        .px(rpx(10.))
+                        .py(rpx(4.))
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .text_size(ts::BODY)
+                        .text_color(if active { p.fg } else { p.fg2 })
+                        .when(active, |d| d.bg(p.raised))
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_capture_mode(m, cx)))
+                        .child(label)
+                }),
+            );
+        let mode_note = match mode {
+            CaptureMode::TeamsOnly => {
+                "Records Teams' own audio and nothing else; falls back to the whole system if Teams is not running."
+            }
+            CaptureMode::WholeSystem => "Records everything your speakers or headset play.",
+        };
+        let chosen = s.audio.mic_device.clone();
+        let mic_option = |id: Option<String>, name: String, i: usize| {
+            let active = chosen == id;
+            div()
+                .id(("mic", i))
+                .flex()
+                .items_center()
+                .gap(rpx(8.))
+                .py(rpx(3.))
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| this.set_mic(id.clone(), cx)))
+                .child(
+                    div()
+                        .size(rpx(12.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(if active { p.fg } else { p.fg4 })
+                        .when(active, |d| d.child(ui::dot(6., p.fg))),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(if active { p.fg } else { p.fg_ctl })
+                        .child(name),
+                )
+        };
+        let missing = chosen
+            .as_ref()
+            .filter(|id| !self.devices.iter().any(|d| &d.id == *id));
+        let mics = div()
+            .flex()
+            .flex_col()
+            .child(mic_option(None, "Default communications device".into(), 0))
+            .children(
+                self.devices
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| mic_option(Some(d.id.clone()), d.name.clone(), i + 1)),
+            )
+            .when_some(missing, |d, _| {
+                d.child(
+                    div()
+                        .text_size(ts::BODY)
+                        .text_color(p.warn_fg)
+                        .child("The saved microphone is not connected; the default is used."),
+                )
+            })
+            .when(self.devices.is_empty(), |d| {
+                d.child(
+                    div()
+                        .text_size(ts::BODY)
+                        .text_color(p.fg3)
+                        .child("No microphones found. Capture needs Windows."),
+                )
+            })
+            .child(
+                div()
+                    .id("refresh-mics")
+                    .mt(rpx(4.))
+                    .text_size(ts::BODY)
+                    .text_color(p.stamp)
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh_devices(cx)))
+                    .child("Refresh list"),
+            );
+
         div()
             .flex_1()
             .flex()
             .flex_col()
             .child(screen_title(
                 "Settings",
-                Some("Editing arrives with each feature; this is what the settings file holds."),
+                Some("Changes save to the settings file as you make them."),
                 p,
             ))
             .child(
@@ -970,75 +1639,86 @@ impl Workspace {
                     .pb(rpx(20.))
                     .max_w(rpx(760.))
                     .text_size(ts::UI)
+                    .child(ui::section_label("Audio", p.fg3).mt(rpx(4.)).mb(rpx(4.)))
+                    .child(row(
+                        "Teams capture",
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_start()
+                            .gap(rpx(6.))
+                            .child(modes)
+                            .child(div().text_size(ts::BODY).text_color(p.fg3).child(mode_note))
+                            .into_any_element(),
+                    ))
+                    .child(row("Microphone", mics.into_any_element()))
+                    .child(
+                        ui::section_label("Everything else", p.fg3)
+                            .mt(rpx(18.))
+                            .mb(rpx(4.)),
+                    )
                     .child(row(
                         "Data folder",
-                        if self.demo {
+                        text(if self.demo {
                             "Demo data in memory (nothing is saved)".to_owned()
                         } else {
                             self.paths.data.display().to_string()
-                        },
+                        }),
                     ))
                     .child(row(
                         "Settings file",
-                        self.paths.settings_file().display().to_string(),
-                    ))
-                    .child(row(
-                        "Teams capture",
-                        match s.audio.capture_mode {
-                            switchscribe_store::CaptureMode::TeamsOnly => "Teams only".to_owned(),
-                            switchscribe_store::CaptureMode::WholeSystem => {
-                                "Whole system".to_owned()
-                            }
-                        },
-                    ))
-                    .child(row(
-                        "Microphone",
-                        s.audio
-                            .mic_device
-                            .clone()
-                            .unwrap_or_else(|| "Default communications device".to_owned()),
+                        text(self.paths.settings_file().display().to_string()),
                     ))
                     .child(row("Detect meetings", on(s.detection.auto_detect)))
                     .child(row(
                         "When detected",
-                        if s.detection.auto_record {
-                            "Record"
-                        } else {
-                            "Ask first"
-                        }
-                        .to_owned(),
+                        text(
+                            if s.detection.auto_record {
+                                "Record"
+                            } else {
+                                "Ask first"
+                            }
+                            .to_owned(),
+                        ),
                     ))
                     .child(row(
                         "Auto-stop after silence",
-                        format!("{} min", s.detection.auto_stop_minutes),
+                        text(format!("{} min", s.detection.auto_stop_minutes)),
                     ))
                     .child(row(
                         "Transcription model",
-                        s.models
-                            .transcription_model
-                            .clone()
-                            .unwrap_or_else(|| "None installed".to_owned()),
+                        text(
+                            s.models
+                                .transcription_model
+                                .clone()
+                                .unwrap_or_else(|| "None installed".to_owned()),
+                        ),
                     ))
                     .child(row("Use GPU", on(s.models.use_gpu)))
                     .child(row("Live captions", on(s.models.live_captions)))
                     .child(row(
                         "Coding CLI",
-                        match &s.agent.cli_path {
+                        text(match &s.agent.cli_path {
                             Some(path) => format!("{} ({})", s.agent.cli.label(), path.display()),
                             None => format!(
                                 "{} (`{}` on PATH)",
                                 s.agent.cli.label(),
                                 s.agent.cli.program()
                             ),
-                        },
+                        }),
                     ))
                     .child(row(
                         "Keep audio",
-                        s.storage
-                            .keep_audio_days
-                            .map_or_else(|| "Forever".to_owned(), |d| format!("{d} days")),
+                        text(
+                            s.storage
+                                .keep_audio_days
+                                .map_or_else(|| "Forever".to_owned(), |d| format!("{d} days")),
+                        ),
                     ))
-                    .child(row("Consent notice", s.storage.consent_notice.clone())),
+                    .child(row(
+                        "Consent notice",
+                        text(s.storage.consent_notice.clone()),
+                    )),
             )
             .into_any_element()
     }
@@ -1142,9 +1822,12 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &actions::ShowSettings, w, cx| {
                 this.show(Screen::Settings, w, cx)
             }))
-            .on_action(cx.listener(|_, _: &actions::ToggleRecording, _, _| {
-                tracing::info!("recording arrives in M1");
-            }))
+            .on_action(
+                cx.listener(|this, _: &actions::ToggleRecording, w, cx| {
+                    this.toggle_recording(w, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &actions::Bookmark, _, cx| this.bookmark(cx)))
             .child(title)
             .child(
                 div()
