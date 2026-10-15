@@ -7,15 +7,18 @@
 pub mod db;
 pub mod model;
 pub mod paths;
+pub mod secret;
 pub mod settings;
+pub mod summary;
 
 pub use db::Store;
 pub use model::{
-    DateGroup, Meeting, MeetingStatus, NewMeeting, NewSegment, Person, SearchHit, Segment,
-    group_by_date,
+    DateGroup, Meeting, MeetingStatus, NewMeeting, NewSegment, Person, PersonStats, SearchFilter,
+    SearchHit, Segment, StoredVoiceprint, group_by_date,
 };
 pub use paths::Paths;
 pub use settings::{CaptureMode, CliKind, Settings};
+pub use summary::{ActionItem, ActionStatus, Bullet, NewActionItem, PendingAction, Summary};
 
 /// Errors from the store.
 #[derive(Debug, thiserror::Error)]

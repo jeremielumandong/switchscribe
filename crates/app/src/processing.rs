@@ -15,11 +15,14 @@ use gpui_kit::{
 };
 use switchscribe_capture::RecorderState;
 use switchscribe_pipeline::JobInput;
-use switchscribe_pipeline::models::{self, MODELS, ModelInfo, VAD_MODEL};
+use switchscribe_pipeline::models::{
+    self, EMBEDDING_MODEL, MODELS, ModelInfo, SEGMENTATION_MODEL, SUPPORT_MODELS, VAD_MODEL,
+};
 use switchscribe_store::MeetingStatus;
 
 use crate::appearance::{rpx, ts};
 use crate::recording::Banner;
+use crate::speakers;
 use crate::theme::Palette;
 use crate::ui::{self, Kind};
 use crate::workspace::{Screen, Workspace};
@@ -95,8 +98,10 @@ pub enum Transcription {
     Queued,
     /// Waiting for a model to be downloaded.
     NeedsModel,
-    /// Running.
+    /// Transcribing.
     Running(f32),
+    /// Identifying speakers (transcription is done).
+    Identifying(f32),
     /// Failed; the reason.
     Failed(String),
 }
@@ -105,7 +110,7 @@ pub enum Transcription {
 #[derive(Default)]
 pub struct Jobs {
     queue: VecDeque<String>,
-    running: Option<(String, Worker<Result<usize, String>>)>,
+    running: Option<Running>,
     failed: HashMap<String, String>,
     downloads: Vec<(&'static str, Worker<Result<(), String>>)>,
     /// Model ids in the models folder (the VAD model's too).
@@ -113,11 +118,26 @@ pub struct Jobs {
     polling: bool,
 }
 
+/// The meeting being processed.
+struct Running {
+    id: String,
+    worker: Worker<Result<MeetingStatus, String>>,
+    /// Speakers are identified after transcription (the speaker models are installed).
+    identify: bool,
+}
+
+/// The share of a job's progress that transcription takes when speakers are identified
+/// after it.
+const TRANSCRIBE_SHARE: f32 = 0.8;
+
+/// The download id of the speaker models (segmentation and embeddings, fetched together).
+const SPEAKER_MODELS: &str = "speakers";
+
 /// The installed models in `dir`, by id.
 pub fn scan_models(dir: &Path) -> HashSet<&'static str> {
     MODELS
         .iter()
-        .chain([&VAD_MODEL])
+        .chain(SUPPORT_MODELS.iter())
         .filter(|m| m.is_installed(dir))
         .map(|m| m.id)
         .collect()
@@ -141,10 +161,17 @@ impl Jobs {
 
     /// A meeting's transcription state; `None` when it is not waiting or running.
     pub fn transcription(&self, id: &str) -> Option<Transcription> {
-        if let Some((rid, w)) = &self.running
-            && rid == id
+        if let Some(r) = &self.running
+            && r.id == id
         {
-            return Some(Transcription::Running(w.progress()));
+            let f = r.worker.progress();
+            return Some(if !r.identify {
+                Transcription::Running(f)
+            } else if f < TRANSCRIBE_SHARE {
+                Transcription::Running(f / TRANSCRIBE_SHARE)
+            } else {
+                Transcription::Identifying((f - TRANSCRIBE_SHARE) / (1.0 - TRANSCRIBE_SHARE))
+            });
         }
         if let Some(e) = self.failed.get(id) {
             return Some(Transcription::Failed(e.clone()));
@@ -185,7 +212,7 @@ impl Workspace {
     /// Queue a recorded meeting for transcription.
     pub(crate) fn queue_transcription(&mut self, id: String, cx: &mut Context<Self>) {
         self.jobs.failed.remove(&id);
-        let running = self.jobs.running.as_ref().is_some_and(|(r, _)| *r == id);
+        let running = self.jobs.running.as_ref().is_some_and(|r| r.id == id);
         if !running && !self.jobs.queue.contains(&id) {
             self.jobs.queue.push_back(id);
         }
@@ -234,7 +261,9 @@ impl Workspace {
         let dir = self.meeting_dir(&id);
         let store = self.store.clone();
         let meeting_id = id.clone();
-        tracing::info!(meeting = %id, model = model.id, "transcribing");
+        let identify = speakers::models_installed(&self.jobs.installed);
+        let share = if identify { TRANSCRIBE_SHARE } else { 1.0 };
+        tracing::info!(meeting = %id, model = model.id, identify, "transcribing");
         let worker = Worker::spawn("transcribe", move |progress, cancel| {
             let segments = switchscribe_pipeline::whisper::transcribe_with_whisper(
                 &dir,
@@ -242,25 +271,110 @@ impl Workspace {
                 vad_path.as_deref(),
                 use_gpu,
                 &input,
-                &mut |f| progress(f),
+                &mut |f| progress(f * share),
                 cancel,
             )
             .map_err(|e| e.to_string())?;
-            let mut store = store
-                .lock()
-                .map_err(|_| "the index is unavailable".to_owned())?;
-            store
-                .add_segments(&meeting_id, &segments)
-                .and_then(|()| store.set_status(&meeting_id, MeetingStatus::Ready))
-                .map_err(|e| e.to_string())?;
-            Ok(segments.len())
+            {
+                let mut store = store
+                    .lock()
+                    .map_err(|_| "the index is unavailable".to_owned())?;
+                store
+                    .replace_segments(&meeting_id, &segments)
+                    .and_then(|()| store.set_status(&meeting_id, MeetingStatus::Ready))
+                    .map_err(|e| e.to_string())?;
+            }
+            if !identify {
+                return Ok(MeetingStatus::Ready);
+            }
+            let to_overall = |f: f32| progress(share + f * (1.0 - share));
+            match speakers::identify_meeting(
+                &dir,
+                &models_dir,
+                &store,
+                &meeting_id,
+                &to_overall,
+                cancel,
+            ) {
+                Ok(status) => Ok(status),
+                // The transcript stands; its Teams lines just stay unnamed.
+                Err(e) => {
+                    tracing::warn!(meeting = %meeting_id, error = %e, "could not identify speakers");
+                    Ok(MeetingStatus::Ready)
+                }
+            }
         });
-        self.jobs.running = Some((id, worker));
+        self.jobs.running = Some(Running {
+            id,
+            worker,
+            identify,
+        });
         self.set_tray(RecorderState::Processing);
         self.poll_jobs(cx);
     }
 
-    /// Download a model (and the VAD model, the first time).
+    /// Download the speaker models (and the VAD model, if missing).
+    pub(crate) fn download_speaker_models(&mut self, cx: &mut Context<Self>) {
+        if self.jobs.download(SPEAKER_MODELS).is_some() {
+            return;
+        }
+        let dir = self.paths.models_dir();
+        let missing: Vec<ModelInfo> = SUPPORT_MODELS
+            .iter()
+            .filter(|m| !self.jobs.installed.contains(m.id))
+            .copied()
+            .collect();
+        let total: u64 = missing
+            .iter()
+            .map(|m| u64::from(m.size_mb))
+            .sum::<u64>()
+            .max(1);
+        let worker = Worker::spawn("download", move |progress, cancel| {
+            let mut before = 0u64;
+            for m in &missing {
+                let size = u64::from(m.size_mb);
+                models::download(
+                    m,
+                    &dir,
+                    &mut |done, all| {
+                        let f = done as f32 / all.unwrap_or(size * 1_000_000).max(1) as f32;
+                        progress((before as f32 + f * size as f32) / total as f32);
+                    },
+                    cancel,
+                )
+                .map_err(|e| e.to_string())?;
+                before += size;
+            }
+            Ok(())
+        });
+        self.jobs.downloads.push((SPEAKER_MODELS, worker));
+        self.poll_jobs(cx);
+        cx.notify();
+    }
+
+    /// Delete the speaker models.
+    pub(crate) fn remove_speaker_models(&mut self, cx: &mut Context<Self>) {
+        let dir = self.paths.models_dir();
+        let task = cx.background_executor().spawn(async move {
+            [SEGMENTATION_MODEL, EMBEDDING_MODEL]
+                .iter()
+                .try_for_each(|m| models::remove(m, &dir))
+        });
+        cx.spawn(async move |this, cx| {
+            let removed = task.await;
+            let _ = this.update(cx, |ws, cx| {
+                if let Err(e) = removed {
+                    ws.banners.push(Banner::plain(format!(
+                        "Could not remove the speaker models: {e}"
+                    )));
+                }
+                ws.refresh_installed(cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Download a model (and the VAD and speaker models, the first time).
     pub(crate) fn download_model(&mut self, id: &'static str, cx: &mut Context<Self>) {
         let Some(model) = models::find(id).copied() else {
             return;
@@ -269,11 +383,18 @@ impl Workspace {
             return;
         }
         let dir = self.paths.models_dir();
-        let need_vad = !self.jobs.installed.contains(VAD_MODEL.id);
+        let support: Vec<ModelInfo> = SUPPORT_MODELS
+            .iter()
+            .filter(|m| !self.jobs.installed.contains(m.id))
+            .copied()
+            .collect();
         let worker = Worker::spawn("download", move |progress, cancel| {
-            if need_vad && let Err(e) = models::download(&VAD_MODEL, &dir, &mut |_, _| {}, cancel) {
-                // Transcription still works without it, finding speech by level.
-                tracing::warn!("could not download the VAD model: {e}");
+            for m in &support {
+                if let Err(e) = models::download(m, &dir, &mut |_, _| {}, cancel) {
+                    // Transcription still works without them: speech is found by level,
+                    // and Teams voices stay unnamed.
+                    tracing::warn!("could not download {}: {e}", m.label);
+                }
             }
             let size = u64::from(model.size_mb) * 1_000_000;
             models::download(
@@ -372,8 +493,8 @@ impl Workspace {
 
     /// Act on finished jobs.
     fn collect_jobs(&mut self, cx: &mut Context<Self>) {
-        if let Some((id, w)) = &self.jobs.running {
-            let result = match w.poll() {
+        if let Some(Running { id, worker, .. }) = &self.jobs.running {
+            let result = match worker.poll() {
                 Poll::Pending => None,
                 Poll::Done(r) => Some(r),
                 Poll::Lost => Some(Err("the transcription stopped unexpectedly".into())),
@@ -398,9 +519,9 @@ impl Workspace {
         });
         for (id, result) in finished {
             match result {
+                Ok(()) if id == SPEAKER_MODELS => self.refresh_installed(cx),
                 Ok(()) => {
                     self.jobs.installed.insert(id);
-                    self.jobs.installed.insert(VAD_MODEL.id);
                     let chosen = self.settings.models.transcription_model.as_deref();
                     if !chosen.is_some_and(|c| self.jobs.installed.contains(c)) {
                         self.use_model(id, cx);
@@ -411,7 +532,11 @@ impl Workspace {
                 }
                 Err(e) if e.contains("cancelled") => {}
                 Err(e) => {
-                    let label = models::find(id).map_or(id, |m| m.label);
+                    let label = if id == SPEAKER_MODELS {
+                        "the speaker models"
+                    } else {
+                        models::find(id).map_or(id, |m| m.label)
+                    };
                     self.banners
                         .push(Banner::plain(format!("Could not download {label}: {e}")));
                 }
@@ -422,17 +547,23 @@ impl Workspace {
     fn transcription_finished(
         &mut self,
         id: String,
-        result: Result<usize, String>,
+        result: Result<MeetingStatus, String>,
         cx: &mut Context<Self>,
     ) {
         match result {
-            Ok(n) => {
-                tracing::info!(meeting = %id, segments = n, "transcribed");
+            Ok(status) => {
+                tracing::info!(meeting = %id, status = status.as_str(), "processed");
                 if let Some(m) = self.meetings.iter_mut().find(|m| m.id == id) {
-                    m.status = MeetingStatus::Ready;
+                    m.status = status;
                 }
                 if self.selected().is_some_and(|m| m.id == id) {
                     self.reload_transcript(cx);
+                    self.reload_speakers(cx);
+                }
+                // The user's voiceprint may have grown.
+                self.refresh_library(cx);
+                if self.settings.agent.auto_summarize {
+                    self.queue_summary(id.clone(), cx);
                 }
             }
             Err(e) => {
@@ -575,6 +706,64 @@ impl Workspace {
                         .child(actions),
                 )
         });
+        let speaker_size = SEGMENTATION_MODEL.size_mb + EMBEDDING_MODEL.size_mb;
+        let speaker_actions: AnyElement =
+            if let Some(f) = self.jobs.download(SPEAKER_MODELS) {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(rpx(8.))
+                    .child(ui::mono(format!("{:.0}%", f * 100.0), ts::SMALL, p.fg2))
+                    .child(link(("speaker-cancel", 0), "Cancel").on_click(
+                        cx.listener(|ws, _, _, cx| ws.cancel_download(SPEAKER_MODELS, cx)),
+                    ))
+                    .into_any_element()
+            } else if speakers::models_installed(&self.jobs.installed) {
+                link(("speaker-remove", 0), "Remove")
+                    .on_click(cx.listener(|ws, _, _, cx| ws.remove_speaker_models(cx)))
+                    .into_any_element()
+            } else {
+                ui::button("speaker-download", "Download", Kind::Secondary, p)
+                    .on_click(cx.listener(|ws, _, _, cx| ws.download_speaker_models(cx)))
+                    .into_any_element()
+            };
+        let speaker_row = div()
+            .flex()
+            .items_center()
+            .gap(rpx(12.))
+            .py(rpx(8.))
+            .border_b_1()
+            .border_color(p.bd)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.fg)
+                            .child("Speaker identification"),
+                    )
+                    .child(div().text_size(ts::BODY).text_color(p.fg3).child(
+                        "pyannote segmentation and TitaNet voiceprints: tells Teams voices apart and recognizes people you have named.",
+                    )),
+            )
+            .child(div().w(rpx(70.)).flex_none().child(ui::mono(
+                format!("{speaker_size} MB"),
+                ts::SMALL,
+                p.fg2,
+            )))
+            .child(
+                div()
+                    .w(rpx(190.))
+                    .flex_none()
+                    .flex()
+                    .justify_end()
+                    .child(speaker_actions),
+            );
         let gpu = self.settings.models.use_gpu;
         let gpu_row = div()
             .flex()
@@ -600,10 +789,11 @@ impl Workspace {
             .flex()
             .flex_col()
             .child(div().text_size(ts::BODY).text_color(p.fg3).pb(rpx(4.)).child(format!(
-                "Models live in {}. The first download also fetches the 1 MB Silero speech detector.",
+                "Models live in {}. The first download also fetches the Silero speech detector and the speaker models.",
                 self.paths.models_dir().display()
             )))
             .children(rows)
+            .child(speaker_row)
             .child(gpu_row)
             .into_any_element()
     }

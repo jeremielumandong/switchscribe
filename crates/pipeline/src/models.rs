@@ -14,6 +14,12 @@ use crate::{Error, Result};
 const WHISPER_BASE: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 /// Where the ggml Silero VAD model is published.
 const VAD_BASE: &str = "https://huggingface.co/ggml-org/whisper-vad/resolve/main";
+/// sherpa-onnx's speaker segmentation models.
+const SEGMENTATION_BASE: &str =
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models";
+/// sherpa-onnx's speaker embedding models (the release tag is spelled this way).
+const EMBEDDING_BASE: &str =
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models";
 
 /// A downloadable model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,12 +35,18 @@ pub struct ModelInfo {
     /// Speed and quality in a few words.
     pub note: &'static str,
     base: &'static str,
+    /// The published file's name, when it differs from [`ModelInfo::file`].
+    remote: Option<&'static str>,
+    /// The file inside a `.tar.bz2` download to keep.
+    extract: Option<&'static str>,
+    /// Known SHA-256 of the download; otherwise the host's `X-Linked-ETag` is used.
+    sha256: Option<&'static str>,
 }
 
 impl ModelInfo {
     /// Download URL.
     pub fn url(&self) -> String {
-        format!("{}/{}", self.base, self.file)
+        format!("{}/{}", self.base, self.remote.unwrap_or(self.file))
     }
 
     /// Path in a models folder.
@@ -58,6 +70,9 @@ pub const MODELS: &[ModelInfo] = &[
         size_mb: 148,
         note: "Fast on any CPU; rough with names and accents",
         base: WHISPER_BASE,
+        remote: None,
+        extract: None,
+        sha256: None,
     },
     ModelInfo {
         id: "small",
@@ -66,6 +81,9 @@ pub const MODELS: &[ModelInfo] = &[
         size_mb: 488,
         note: "Good on CPU; about real time on a laptop",
         base: WHISPER_BASE,
+        remote: None,
+        extract: None,
+        sha256: None,
     },
     ModelInfo {
         id: "large-v3-turbo-q5",
@@ -74,6 +92,9 @@ pub const MODELS: &[ModelInfo] = &[
         size_mb: 574,
         note: "Best accuracy for its size; wants a GPU",
         base: WHISPER_BASE,
+        remote: None,
+        extract: None,
+        sha256: None,
     },
     ModelInfo {
         id: "large-v3-turbo",
@@ -82,6 +103,9 @@ pub const MODELS: &[ModelInfo] = &[
         size_mb: 1624,
         note: "Most accurate; GPU strongly recommended",
         base: WHISPER_BASE,
+        remote: None,
+        extract: None,
+        sha256: None,
     },
 ];
 
@@ -93,7 +117,39 @@ pub const VAD_MODEL: ModelInfo = ModelInfo {
     size_mb: 1,
     note: "Finds speech so silence is skipped",
     base: VAD_BASE,
+    remote: None,
+    extract: None,
+    sha256: None,
 };
+
+/// Speaker segmentation (pyannote 3.0, ONNX), for diarizing the Teams track.
+pub const SEGMENTATION_MODEL: ModelInfo = ModelInfo {
+    id: "pyannote-segmentation-3",
+    file: "pyannote-segmentation-3.0.onnx",
+    label: "Speaker segmentation",
+    size_mb: 7,
+    note: "Finds where one speaker hands over to another",
+    base: SEGMENTATION_BASE,
+    remote: Some("sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"),
+    extract: Some("model.onnx"),
+    sha256: Some("24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488"),
+};
+
+/// Speaker embeddings (NVIDIA NeMo TitaNet-small), for clustering and voiceprints.
+pub const EMBEDDING_MODEL: ModelInfo = ModelInfo {
+    id: "titanet-small",
+    file: "nemo_en_titanet_small.onnx",
+    label: "Voiceprints",
+    size_mb: 40,
+    note: "Tells voices apart and recognizes them next time",
+    base: EMBEDDING_BASE,
+    remote: None,
+    extract: None,
+    sha256: Some("ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e"),
+};
+
+/// The models fetched alongside the first transcription model.
+pub const SUPPORT_MODELS: [ModelInfo; 3] = [VAD_MODEL, SEGMENTATION_MODEL, EMBEDDING_MODEL];
 
 /// A model by id.
 pub fn find(id: &str) -> Option<&'static ModelInfo> {
@@ -127,6 +183,7 @@ fn expected_sha256(url: &str) -> Option<String> {
 
 /// Download `model` into `dir`, reporting `(bytes so far, total if known)`. Written to a
 /// `.part` file and renamed once the SHA-256 matches, so a finished file is always whole.
+/// Archives are unpacked and only the model file is kept.
 pub fn download(
     model: &ModelInfo,
     dir: &Path,
@@ -135,7 +192,10 @@ pub fn download(
 ) -> Result<PathBuf> {
     std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
     let url = model.url();
-    let expected = expected_sha256(&url);
+    let expected = match model.sha256 {
+        Some(s) => Some(s.to_owned()),
+        None => expected_sha256(&url),
+    };
     if expected.is_none() {
         tracing::warn!(%url, "no checksum offered; the download is not verified");
     }
@@ -184,9 +244,38 @@ pub fn download(
         return Err(Error::Verify { expected, got });
     }
     let path = model.path(dir);
-    std::fs::rename(&part, &path).map_err(|e| Error::io(&path, e))?;
+    match model.extract {
+        Some(member) => {
+            let unpacked = unpack(&part, member, &path);
+            let _ = std::fs::remove_file(&part);
+            unpacked?;
+        }
+        None => std::fs::rename(&part, &path).map_err(|e| Error::io(&path, e))?,
+    }
     tracing::info!(model = model.id, bytes = done, "model downloaded");
     Ok(path)
+}
+
+/// Copy the entry of a `.tar.bz2` whose path ends in `member` to `to`.
+fn unpack(archive: &Path, member: &str, to: &Path) -> Result<()> {
+    let file = File::open(archive).map_err(|e| Error::io(archive, e))?;
+    let mut tar = tar::Archive::new(bzip2::read::BzDecoder::new(std::io::BufReader::new(file)));
+    let bad = |e: std::io::Error| Error::Download(format!("{}: {e}", archive.display()));
+    for entry in tar.entries().map_err(bad)? {
+        let mut entry = entry.map_err(bad)?;
+        let name = entry.path().map_err(bad)?.into_owned();
+        if name.file_name().is_some_and(|n| n == member) {
+            let tmp = to.with_extension("unpack");
+            let mut out = File::create(&tmp).map_err(|e| Error::io(&tmp, e))?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| Error::io(&tmp, e))?;
+            drop(out);
+            return std::fs::rename(&tmp, to).map_err(|e| Error::io(to, e));
+        }
+    }
+    Err(Error::Download(format!(
+        "{}: no {member} inside",
+        archive.display()
+    )))
 }
 
 /// Delete an installed model.
@@ -225,6 +314,45 @@ mod tests {
             parse_etag(&format!("W/\"{}\"", hex.to_uppercase())),
             Some(hex)
         );
+    }
+
+    #[test]
+    fn speaker_models_come_from_github() {
+        assert!(SEGMENTATION_MODEL.url().ends_with(".tar.bz2"));
+        assert!(
+            EMBEDDING_MODEL
+                .url()
+                .ends_with("/nemo_en_titanet_small.onnx")
+        );
+        assert!(SUPPORT_MODELS.iter().all(|m| find(m.id).is_none()));
+    }
+
+    #[test]
+    fn unpacks_one_member() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("a.tar.bz2");
+        {
+            let enc = bzip2::write::BzEncoder::new(
+                File::create(&archive).unwrap(),
+                bzip2::Compression::fast(),
+            );
+            let mut tar = tar::Builder::new(enc);
+            for (name, data) in [
+                ("pkg/README.md", &b"readme"[..]),
+                ("pkg/model.onnx", b"onnx"),
+            ] {
+                let mut h = tar::Header::new_gnu();
+                h.set_size(data.len() as u64);
+                h.set_mode(0o644);
+                h.set_cksum();
+                tar.append_data(&mut h, name, data).unwrap();
+            }
+            tar.into_inner().unwrap().finish().unwrap();
+        }
+        let to = dir.path().join("seg.onnx");
+        unpack(&archive, "model.onnx", &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"onnx");
+        assert!(unpack(&archive, "missing.onnx", &to).is_err());
     }
 
     #[test]

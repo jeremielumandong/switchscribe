@@ -91,6 +91,20 @@ Nothing depends on `app`.
 - whisper.cpp (whisper-rs) is built from source with CMake and a C++ compiler, which
   makes a clean build slow. Playback uses `cpal`, which needs `libasound2-dev` on Linux.
   Models download from huggingface.co; `SWITCHSCRIBE_DATA/models` holds them.
+- Speaker identification uses sherpa-onnx's prebuilt **shared** libraries (static ones
+  crash next to whisper.cpp; see DECISIONS). Its build script downloads them from
+  GitHub; behind a proxy that breaks TLS, fetch the archive yourself and set
+  `SHERPA_ONNX_ARCHIVE_DIR`. The DLLs / `.so` files must ship next to the executable.
+- Tests that need real speaker models are skipped unless `SWITCHSCRIBE_TEST_MODELS`
+  points at a folder with `pyannote-segmentation-3.0.onnx`,
+  `nemo_en_titanet_small.onnx` and sherpa-onnx's `four.wav` test file.
+- `SWITCHSCRIBE_TEST_CLI=claude` (or `codex`, `gemini`) runs the agent test that
+  summarizes through the real, signed-in CLI; skipped otherwise.
+- `switchscribe mcp [--ask] [--demo]` is the MCP server on stdio: stdout carries only
+  JSON-RPC, so log to stderr there.
+- In GPUI, text wraps only inside a block div with a width (`flex_1().min_w_0()`), not
+  as a direct child of a `flex()` row. A scrolling `flex_1` column inside a `flex_col`
+  needs `min_h_0()` on it and its parent, or it grows instead of scrolling.
 - The debug `target/` grows past 20 GB with full debuginfo; if the disk fills, set
   `debug = "line-tables-only"` for the dev and test profiles in `~/.cargo/config.toml`.
 - Capture threads and device listing join COM's MTA on their own threads; never call

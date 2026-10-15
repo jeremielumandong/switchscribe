@@ -6,6 +6,7 @@
 extern crate gpui_kit as gpui;
 
 mod actions;
+mod agent_view;
 mod appearance;
 mod ask_panel;
 mod assets;
@@ -17,6 +18,7 @@ mod mini_recorder;
 mod player_bar;
 mod processing;
 mod recording;
+mod speakers;
 mod theme;
 #[cfg(windows)]
 mod tray;
@@ -78,8 +80,13 @@ fn startup(demo: bool) -> Result<Startup> {
             store.set_status(&m.id, MeetingStatus::Processing)?;
         }
     }
+    if !demo {
+        speakers::ensure_me(&store)?;
+    }
     let meetings = store.meetings()?;
     let people = store.people()?;
+    let voiceprints = store.voiceprints()?;
+    let people_stats = store.people_stats()?;
     let devices = switchscribe_capture::input_devices();
     let installed_models = processing::scan_models(&paths.models_dir());
     tracing::info!(
@@ -98,7 +105,35 @@ fn startup(demo: bool) -> Result<Startup> {
         store_error,
         devices,
         installed_models,
+        voiceprints,
+        people_stats,
     })
+}
+
+/// `switchscribe mcp [--ask] [--demo]`: the MCP server a coding CLI starts, on stdio.
+/// Logs go to stderr, since stdout carries the protocol.
+fn mcp(args: &[String]) -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_env_filter(
+            EnvFilter::try_from_env("SWITCHSCRIBE_LOG").unwrap_or_else(|_| EnvFilter::new("warn")),
+        )
+        .init();
+    let mode = if args.iter().any(|a| a == "--ask") {
+        switchscribe_agent::mcp::Mode::Ask
+    } else {
+        switchscribe_agent::mcp::Mode::Direct
+    };
+    let mut store = if args.iter().any(|a| a == "--demo") {
+        demo::store(chrono::Local::now().date_naive())?
+    } else {
+        let paths = Paths::resolve().context("could not determine a home directory")?;
+        Store::open(&paths.db_file())?
+    };
+    let stdin = std::io::stdin();
+    switchscribe_agent::mcp::serve(&mut store, mode, stdin.lock(), std::io::stdout())?;
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -106,6 +141,9 @@ fn main() -> Result<()> {
     if args.first().is_some_and(|a| a == "--version") {
         println!("switchscribe {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
+    }
+    if args.first().is_some_and(|a| a == "mcp") {
+        return mcp(&args[1..]);
     }
     tracing_subscriber::fmt()
         .with_env_filter(

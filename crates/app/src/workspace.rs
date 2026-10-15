@@ -18,16 +18,18 @@ use gpui_kit::{
 };
 use switchscribe_capture::{Backend, InputDevice, Recorder, RecorderState, RemoteMode};
 use switchscribe_store::{
-    CaptureMode, Meeting, MeetingStatus, NewMeeting, Paths, Person, SearchHit, Segment, Settings,
-    Store, group_by_date,
+    ActionStatus, CaptureMode, Meeting, MeetingStatus, NewMeeting, Paths, Person, PersonStats,
+    SearchFilter, SearchHit, Segment, Settings, Store, StoredVoiceprint, group_by_date,
 };
 
 use crate::actions;
+use crate::agent_view::{self, Agent};
 use crate::appearance::{rpx, ts};
-use crate::ask_panel::{AskEvent, AskPanel};
+use crate::ask_panel::{AskEvent, AskPanel, AskRequest, Scope};
 use crate::player_bar::Playback;
 use crate::processing::Jobs;
 use crate::recording::{self, Banner, NotesDoc, Session};
+use crate::speakers::{self, Speakers};
 use crate::theme::{MONO, Palette, SANS, palette};
 use crate::ui::{self, Kind};
 use crate::{live_view, meeting_view, mini_recorder};
@@ -55,6 +57,10 @@ pub struct Startup {
     pub devices: Vec<InputDevice>,
     /// Models in the models folder, by id.
     pub installed_models: HashSet<&'static str>,
+    /// The voiceprint library.
+    pub voiceprints: Vec<StoredVoiceprint>,
+    /// Per-person numbers for the People screen.
+    pub people_stats: Vec<PersonStats>,
 }
 
 /// The main pane's screens.
@@ -113,11 +119,18 @@ pub struct Workspace {
     pub(crate) jobs: Jobs,
     /// The playhead follows playback.
     pub(crate) following: bool,
+    /// Speaker files, the library, and the naming card's state.
+    pub(crate) speakers: Speakers,
+    /// Summaries, action items and the CLI.
+    pub(crate) agent: Agent,
     ask: Entity<AskPanel>,
     ask_open: bool,
     search_input: Entity<InputState>,
     search_hits: Vec<SearchHit>,
     search_generation: u64,
+    /// Search filters: one person, and the last N days.
+    search_person: Option<i64>,
+    search_days: Option<u32>,
     /// The recording in progress.
     pub(crate) recording: Option<Session>,
     /// A recording is being set up.
@@ -139,7 +152,8 @@ pub struct Workspace {
 impl Workspace {
     /// The window's root view.
     pub fn new(s: Startup, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let ask = cx.new(|cx| AskPanel::new(s.settings.agent.cli, s.demo, window, cx));
+        let ask =
+            cx.new(|cx| AskPanel::new(s.settings.agent.cli, s.demo, s.store.clone(), window, cx));
         let search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search every meeting"));
         let subs = vec![
@@ -149,7 +163,12 @@ impl Workspace {
                 async {}
             }),
             cx.subscribe_in(&ask, window, |this, _, ev: &AskEvent, _, cx| match ev {
-                AskEvent::Cite(at) => this.cue(*at, cx),
+                AskEvent::Cite(meeting, at) => this.open_moment(meeting, *at, cx),
+                AskEvent::Ask(q) => this.answer(q.clone(), cx),
+                AskEvent::Changed => {
+                    this.load_summary(cx);
+                    this.load_all_actions(cx);
+                }
             }),
             cx.subscribe_in(&search_input, window, |this, _, ev: &InputEvent, _, cx| {
                 if let InputEvent::Change = ev {
@@ -185,11 +204,15 @@ impl Workspace {
             body_scroll: ScrollHandle::new(),
             following: false,
             jobs: Jobs::new(s.installed_models),
+            speakers: Speakers::new(s.voiceprints, s.people_stats, window, cx),
+            agent: Agent::default(),
             ask,
             ask_open,
             search_input,
             search_hits: Vec::new(),
             search_generation: 0,
+            search_person: None,
+            search_days: None,
             recording: None,
             starting: false,
             banners: Vec::new(),
@@ -207,6 +230,10 @@ impl Workspace {
         }
         this.focus.focus(window, cx);
         this.load_transcript(cx);
+        this.load_speakers(cx);
+        this.load_summary(cx);
+        this.load_all_actions(cx);
+        this.detect_cli(cx);
         this.load_notes(cx);
         this.load_playback(cx);
         // Meetings left mid-processing (a quit, a crash) pick up where they were.
@@ -240,13 +267,15 @@ impl Workspace {
         self.people.iter().find(|p| p.id == id)
     }
 
-    fn select(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(crate) fn select(&mut self, id: String, cx: &mut Context<Self>) {
         if self.recording.as_ref().is_some_and(|s| s.meeting_id == id) {
             self.screen = Screen::Live;
         } else if self.screen != Screen::Meeting(id.clone()) {
             self.screen = Screen::Meeting(id);
             self.playhead = 0;
             self.load_transcript(cx);
+            self.load_speakers(cx);
+            self.load_summary(cx);
             self.load_notes(cx);
             self.load_playback(cx);
         }
@@ -284,6 +313,9 @@ impl Workspace {
 
     fn show(&mut self, screen: Screen, window: &mut Window, cx: &mut Context<Self>) {
         let search = screen == Screen::Search;
+        if screen == Screen::ActionItems {
+            self.load_all_actions(cx);
+        }
         self.screen = screen;
         if search {
             self.search_input.update(cx, |s, cx| s.focus(window, cx));
@@ -346,14 +378,61 @@ impl Workspace {
         .detach();
     }
 
+    /// Answer an Ask panel question with the chosen CLI and the MCP server.
+    fn answer(&mut self, question: String, cx: &mut Context<Self>) {
+        let scope = match (self.ask.read(cx).scope(), self.selected()) {
+            (Scope::Meeting, Some(m)) => {
+                switchscribe_agent::ask::AskScope::Meeting(m.id.clone(), m.title.clone())
+            }
+            _ => switchscribe_agent::ask::AskScope::All,
+        };
+        let cli = match &self.agent.cli {
+            Some(Ok(program)) => Ok(switchscribe_agent::Cli {
+                kind: self.settings.agent.cli,
+                program: program.clone(),
+            }),
+            Some(Err(e)) => Err(e.clone()),
+            None => Err(format!(
+                "Still looking for {}.",
+                self.settings.agent.cli.label()
+            )),
+        };
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("switchscribe"));
+        let mut args = vec!["mcp".to_owned(), "--ask".to_owned()];
+        if self.demo {
+            // The demo's meetings live in memory; the server rebuilds the same data.
+            args.push("--demo".to_owned());
+        }
+        let req = AskRequest {
+            question,
+            scope,
+            cli,
+            mcp: switchscribe_agent::McpServer { command: exe, args },
+            me: self.people.iter().find(|p| p.is_me).map(|p| p.name.clone()),
+            workdir: if self.demo {
+                std::env::temp_dir().join("switchscribe-demo").join("agent")
+            } else {
+                self.paths.data.join("agent")
+            },
+        };
+        self.ask.update(cx, |a, cx| a.run(req, cx));
+    }
+
     fn run_search(&mut self, cx: &mut Context<Self>) {
         let query = self.search_input.read(cx).value().to_string();
         self.search_generation += 1;
         let generation = self.search_generation;
         let store = self.store.clone();
+        let filter = SearchFilter {
+            person: self.search_person,
+            since: self
+                .search_days
+                .map(|d| Local::now().timestamp() - i64::from(d) * 86_400),
+            meeting: None,
+        };
         let task = cx.background_executor().spawn(async move {
             match store.lock() {
-                Ok(s) => s.search(&query, 200),
+                Ok(s) => s.search_with(&query, &filter, 200),
                 Err(_) => Ok(Vec::new()),
             }
         });
@@ -407,10 +486,11 @@ impl Workspace {
         cx.notify();
     }
 
-    fn cycle_cli(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn cycle_cli(&mut self, cx: &mut Context<Self>) {
         let cli = self.settings.agent.cli.next();
         self.settings.agent.cli = cli;
         self.ask.update(cx, |a, cx| a.set_cli(cli, cx));
+        self.detect_cli(cx);
         self.save_settings(cx);
         cx.notify();
     }
@@ -1072,7 +1152,19 @@ impl Workspace {
             .border_color(p.bd)
             .children(
                 [
-                    (Screen::ActionItems, "Action items", String::new()),
+                    (Screen::ActionItems, "Action items", {
+                        let open = self
+                            .agent
+                            .all_items
+                            .iter()
+                            .filter(|i| i.status != ActionStatus::Done)
+                            .count();
+                        if open == 0 {
+                            String::new()
+                        } else {
+                            open.to_string()
+                        }
+                    }),
                     (Screen::People, "People", self.people.len().to_string()),
                     (Screen::Search, "Search", "Ctrl+Shift+F".to_owned()),
                 ]
@@ -1228,12 +1320,8 @@ impl Workspace {
                 None => self.render_empty(p, cx),
             },
             Screen::Empty => self.render_empty(p, cx),
-            Screen::ActionItems => self.render_placeholder(
-                "Action items",
-                "Action items from every meeting land here once summaries run (M4), with owners, due dates and Send to Jira (M5).",
-                p,
-            ),
-            Screen::People => self.render_people(p),
+            Screen::ActionItems => agent_view::action_items_screen(self, p, cx),
+            Screen::People => speakers::people_screen(self, p, cx),
             Screen::Search => self.render_search(p, cx),
             Screen::Settings => self.render_settings(p, cx),
         };
@@ -1325,93 +1413,6 @@ impl Workspace {
                 ),
         )
         .into_any_element()
-    }
-
-    fn render_placeholder(
-        &self,
-        title: &'static str,
-        body: &'static str,
-        p: &Palette,
-    ) -> AnyElement {
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .child(screen_title(title, None, p))
-            .child(ui::empty_state("Nothing here yet", body, p))
-            .into_any_element()
-    }
-
-    fn render_people(&self, p: &Palette) -> AnyElement {
-        let header = |text: &'static str| {
-            div()
-                .px(rpx(4.))
-                .py(rpx(8.))
-                .border_b_1()
-                .border_color(p.bd)
-                .text_size(ts::SMALL)
-                .text_color(p.fg3)
-                .child(text)
-        };
-        let rows = self.people.iter().map(|person| {
-            div()
-                .flex()
-                .items_center()
-                .gap(rpx(10.))
-                .px(rpx(4.))
-                .py(rpx(10.))
-                .border_b_1()
-                .border_color(p.elev)
-                .when(person.is_me, |d| d.bg(p.surface))
-                .child(
-                    div()
-                        .size(rpx(12.))
-                        .rounded(px(3.))
-                        .bg(p.speaker(person.color)),
-                )
-                .child(
-                    div()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(person.name.clone()),
-                )
-                .when(person.is_me, |d| {
-                    d.child(
-                        div()
-                            .text_size(ts::SMALL)
-                            .text_color(p.fg3)
-                            .child("you · mic track"),
-                    )
-                })
-        });
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .child(screen_title(
-                "People",
-                Some("Voiceprints are stored encrypted on this machine and can be deleted per person."),
-                p,
-            ))
-            .child(if self.people.is_empty() {
-                ui::empty_state(
-                    "No voiceprints yet",
-                    "You enroll your own voice during onboarding; colleagues are added when you name a speaker (M3).",
-                    p,
-                )
-                .into_any_element()
-            } else {
-                div()
-                    .id("people")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .px(rpx(20.))
-                    .pb(rpx(20.))
-                    .text_size(ts::UI)
-                    .child(header("Name"))
-                    .children(rows)
-                    .into_any_element()
-            })
-            .into_any_element()
     }
 
     fn render_search(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
@@ -1523,14 +1524,67 @@ impl Workspace {
                     .child(
                         div()
                             .flex()
+                            .flex_wrap()
                             .items_center()
                             .gap(rpx(6.))
                             .text_size(ts::BODY)
-                            .text_color(p.fg4)
-                            .child("Filters by person, date and meeting type arrive in M4.")
+                            .child(div().text_color(p.fg3).child("Person"))
+                            .children(self.people.iter().map(|person| {
+                                let on = self.search_person == Some(person.id);
+                                let id = person.id;
+                                let color = p.speaker(person.color);
+                                div()
+                                    .id(("search-person", id as usize))
+                                    .flex()
+                                    .items_center()
+                                    .gap(rpx(5.))
+                                    .px(rpx(8.))
+                                    .py(rpx(3.))
+                                    .rounded(px(12.))
+                                    .border_1()
+                                    .border_color(if on { color } else { p.bd2 })
+                                    .text_color(if on { p.fg } else { p.fg_ctl })
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.search_person = if on { None } else { Some(id) };
+                                        this.run_search(cx);
+                                    }))
+                                    .child(ui::dot(7., color))
+                                    .child(person.name.clone())
+                            }))
+                            .child(div().w(rpx(10.)))
+                            .child(div().text_color(p.fg3).child("Date"))
+                            .children(
+                                [
+                                    (None, "Any time"),
+                                    (Some(7), "Past week"),
+                                    (Some(30), "Past month"),
+                                ]
+                                .into_iter()
+                                .map(|(days, label)| {
+                                    let on = self.search_days == days;
+                                    div()
+                                        .id(label)
+                                        .px(rpx(8.))
+                                        .py(rpx(3.))
+                                        .rounded(px(12.))
+                                        .border_1()
+                                        .border_color(if on { p.fg2 } else { p.bd2 })
+                                        .text_color(if on { p.fg } else { p.fg_ctl })
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.search_days = days;
+                                            this.run_search(cx);
+                                        }))
+                                        .child(label)
+                                }),
+                            )
                             .child(div().flex_1())
                             .child(ui::mono(
-                                format!("{} hits", self.search_hits.len()),
+                                match self.search_hits.len() {
+                                    1 => "1 hit".to_owned(),
+                                    n => format!("{n} hits"),
+                                },
                                 ts::BODY,
                                 p.fg3,
                             )),
@@ -1669,6 +1723,7 @@ impl Workspace {
 
         div()
             .flex_1()
+            .min_h_0()
             .flex()
             .flex_col()
             .child(screen_title(
@@ -1680,6 +1735,7 @@ impl Workspace {
                 div()
                     .id("settings-rows")
                     .flex_1()
+                    .min_h_0()
                     .overflow_y_scroll()
                     .px(rpx(20.))
                     .pb(rpx(20.))
@@ -1700,6 +1756,8 @@ impl Workspace {
                     .child(row("Microphone", mics.into_any_element()))
                     .child(ui::section_label("Models", p.fg3).mt(rpx(18.)).mb(rpx(4.)))
                     .child(self.render_models(p, cx))
+                    .child(ui::section_label("Agent", p.fg3).mt(rpx(18.)).mb(rpx(4.)))
+                    .child(agent_view::settings_agent(self, p, cx))
                     .child(
                         ui::section_label("Everything else", p.fg3)
                             .mt(rpx(18.))
@@ -1734,17 +1792,6 @@ impl Workspace {
                         text(format!("{} min", s.detection.auto_stop_minutes)),
                     ))
                     .child(row("Live captions", on(s.models.live_captions)))
-                    .child(row(
-                        "Coding CLI",
-                        text(match &s.agent.cli_path {
-                            Some(path) => format!("{} ({})", s.agent.cli.label(), path.display()),
-                            None => format!(
-                                "{} (`{}` on PATH)",
-                                s.agent.cli.label(),
-                                s.agent.cli.program()
-                            ),
-                        }),
-                    ))
                     .child(row(
                         "Keep audio",
                         text(

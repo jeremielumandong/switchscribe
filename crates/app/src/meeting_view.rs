@@ -10,12 +10,14 @@ use gpui_kit::{
 use switchscribe_pipeline::Step;
 use switchscribe_store::{Meeting, MeetingStatus, Segment};
 
+use crate::agent_view::{self, SummaryJob};
 use crate::appearance::{rpx, ts};
 use crate::demo;
 use crate::format;
 use crate::player_bar;
 use crate::processing::Transcription;
 use crate::recording::{self, NotesDoc};
+use crate::speakers;
 use crate::theme::{MONO, Palette};
 use crate::ui::{self, Kind};
 use crate::workspace::{Tab, Workspace};
@@ -31,17 +33,17 @@ pub fn render(ws: &Workspace, m: &Meeting, p: &Palette, cx: &mut Context<Workspa
     // The transcript's lines sit directly in the scroll container, so playback can
     // scroll to one.
     let rows: Vec<AnyElement> = if ws.tab == Tab::Transcript && !transcript.is_empty() {
-        transcript_rows(ws, transcript, p, cx)
+        // The Name-a-speaker card comes first (see `scroll_to_playhead`).
+        ws.naming_cluster()
+            .map(|c| speakers::name_card(ws, c, transcript, p, cx))
+            .into_iter()
+            .chain(transcript_rows(ws, transcript, p, cx))
+            .collect()
     } else {
         Vec::new()
     };
     let body: AnyElement = match ws.tab {
-        Tab::Summary if featured => summary(p, cx),
-        Tab::Summary => pending(
-            "No summary yet",
-            "After each call the coding CLI writes the summary, decisions, action items and open questions, each linked to its moment (M4).",
-            p,
-        ),
+        Tab::Summary => agent_view::summary_tab(ws, m, p, cx),
         Tab::Transcript if transcript.is_empty() => {
             let body = match &transcribing {
                 Some(Transcription::NeedsModel) => {
@@ -54,12 +56,7 @@ pub fn render(ws: &Workspace, m: &Meeting, p: &Palette, cx: &mut Context<Workspa
             ui::empty_state("No transcript yet", body, p).into_any_element()
         }
         Tab::Transcript => div().into_any_element(),
-        Tab::Actions if featured => actions(p, cx),
-        Tab::Actions => pending(
-            "No action items yet",
-            "Action items come out of the summary, with owners and due dates (M4).",
-            p,
-        ),
+        Tab::Actions => agent_view::actions_tab(ws, m, p, cx),
         Tab::Notes if featured => notes(p, cx),
         Tab::Notes => match &ws.notes_doc {
             Some((id, doc)) if *id == m.id && !doc.is_empty() => recorded_notes(doc, p, cx),
@@ -70,7 +67,12 @@ pub fn render(ws: &Workspace, m: &Meeting, p: &Palette, cx: &mut Context<Workspa
             ),
         },
     };
-    let action_count = if featured { demo::actions().len() } else { 0 };
+    let action_count = ws
+        .agent
+        .meeting
+        .as_ref()
+        .filter(|(id, _, _)| *id == m.id)
+        .map_or(0, |(_, _, items)| items.len());
     let player = ws
         .playback
         .as_ref()
@@ -142,8 +144,9 @@ fn header(
         .flex_none()
         .gap(rpx(6.))
         .child(
-            ui::button("rerun", "Re-run summary", Kind::Secondary, p).tooltip(|w, cx| {
-                gpui_kit::component::tooltip::Tooltip::new("Summaries arrive in M4").build(w, cx)
+            ui::button("rerun", "Re-run summary", Kind::Secondary, p).on_click({
+                let id = m.id.clone();
+                cx.listener(move |ws, _, _, cx| ws.queue_summary(id.clone(), cx))
             }),
         )
         .child(
@@ -229,8 +232,22 @@ fn header(
                 )
                 .child(buttons),
         )
-        .when(m.status == MeetingStatus::Processing, |d| {
-            d.child(stepper(ws.demo && m.id == demo::FEATURED, transcribing, p))
+        .map(|d| {
+            let summarizing = ws
+                .agent
+                .job(&m.id)
+                .filter(|j| !matches!(j, SummaryJob::Failed(_)));
+            if m.status == MeetingStatus::Processing || summarizing.is_some() {
+                d.child(stepper(
+                    ws.demo && m.id == demo::FEATURED,
+                    m.status == MeetingStatus::Processing,
+                    transcribing,
+                    summarizing,
+                    p,
+                ))
+            } else {
+                d
+            }
         })
         .child(tabs)
         .into_any_element()
@@ -241,9 +258,15 @@ fn count(n: usize) -> String {
 }
 
 /// Capture → Transcribe → Identify speakers → Summarize. The demo shows the prototype's
-/// progress; a real recording shows its transcription (speakers arrive in M3, summaries
-/// in M4).
-fn stepper(featured: bool, transcribing: Option<Transcription>, p: &Palette) -> AnyElement {
+/// progress; a real recording shows its transcription, speaker identification and
+/// summary.
+fn stepper(
+    featured: bool,
+    processing: bool,
+    transcribing: Option<Transcription>,
+    summarizing: Option<SummaryJob>,
+    p: &Palette,
+) -> AnyElement {
     let progress: [(f32, String); 4] = if featured {
         [
             (1.0, "done".into()),
@@ -252,18 +275,25 @@ fn stepper(featured: bool, transcribing: Option<Transcription>, p: &Palette) -> 
             (0.0, "~45s".into()),
         ]
     } else {
-        let transcribe = match transcribing {
-            Some(Transcription::Running(f)) => (f.max(0.01), format!("{:.0}%", f * 100.0)),
-            Some(Transcription::Queued) | None => (0.0, "queued".into()),
-            Some(Transcription::NeedsModel) => (0.0, "needs a model".into()),
-            Some(Transcription::Failed(_)) => (0.0, "failed".into()),
+        let pct = |f: f32| (f.max(0.01), format!("{:.0}%", f * 100.0));
+        let done = || (1.0, "done".to_owned());
+        let (transcribe, identify) = match transcribing {
+            _ if !processing => (done(), done()),
+            Some(Transcription::Running(f)) => (pct(f), (0.0, String::new())),
+            Some(Transcription::Identifying(f)) => ((1.0, "done".into()), pct(f)),
+            Some(Transcription::Queued) | None => ((0.0, "queued".into()), (0.0, String::new())),
+            Some(Transcription::NeedsModel) => {
+                ((0.0, "needs a model".into()), (0.0, String::new()))
+            }
+            Some(Transcription::Failed(_)) => ((0.0, "failed".into()), (0.0, String::new())),
         };
-        [
-            (1.0, "done".into()),
-            transcribe,
-            (0.0, String::new()),
-            (0.0, String::new()),
-        ]
+        let summarize = match summarizing {
+            // How long the CLI takes is unknown; show it as under way.
+            Some(SummaryJob::Running) => (0.5, "writing".to_owned()),
+            Some(SummaryJob::Queued) => (0.0, "queued".to_owned()),
+            _ => (0.0, String::new()),
+        };
+        [(1.0, "done".into()), transcribe, identify, summarize]
     };
     div()
         .mt(rpx(14.))
@@ -327,59 +357,6 @@ fn pending(title: &'static str, body: &'static str, p: &Palette) -> AnyElement {
     ui::empty_state(title, body, p).into_any_element()
 }
 
-fn summary(p: &Palette, cx: &mut Context<Workspace>) -> AnyElement {
-    div()
-        .max_w(rpx(760.))
-        .p(rpx(20.))
-        .flex()
-        .flex_col()
-        .gap(rpx(22.))
-        .child(
-            div()
-                .flex()
-                .gap(rpx(8.))
-                .text_size(ts::SMALL)
-                .text_color(p.fg3)
-                .child(ui::mono("template: planning", ts::SMALL, p.fg3))
-                .child("·")
-                .child("generated by Claude Code via MCP"),
-        )
-        .children(demo::summary().into_iter().enumerate().map(|(si, sec)| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(rpx(8.))
-                .child(ui::section_label(sec.title, p.fg2))
-                .children(sec.items.into_iter().enumerate().map(|(bi, b)| {
-                    let at = b.at;
-                    let owner = b.owner.map(|o| demo::PEOPLE[o]);
-                    div()
-                        .flex()
-                        .items_start()
-                        .gap(rpx(10.))
-                        .line_height(rpx(20.))
-                        .child(
-                            div()
-                                .mt(rpx(8.))
-                                .size(rpx(4.))
-                                .flex_none()
-                                .rounded_full()
-                                .bg(p.fg4),
-                        )
-                        .child(div().flex_1().min_w_0().text_color(p.text).child(b.text))
-                        .when_some(owner, |d, (name, color)| {
-                            d.child(ui::person_chip(name, p.speaker(Some(color)), p).mt(rpx(1.)))
-                        })
-                        .child(
-                            ui::stamp(("sum", si * 100 + bi), at, true, p)
-                                .mt(rpx(1.))
-                                .on_click(cx.listener(move |this, _, _, cx| this.cue(at, cx))),
-                        )
-                }))
-        }))
-        .into_any_element()
-}
-
 fn transcript_rows(
     ws: &Workspace,
     segments: &[Segment],
@@ -397,6 +374,7 @@ fn transcript_rows(
                 None => (s.speaker_label.clone().into(), p.unknown, false),
             };
             let on = i == active;
+            let relabel = on && ws.can_relabel(&s.speaker_label);
             let at = s.start_ms / 1000;
             div()
                 .id(("seg", i))
@@ -480,9 +458,20 @@ fn transcript_rows(
                                 }),
                             ))
                             .children(
-                                ["Copy", "Edit", "Relabel"]
+                                ["Copy", "Edit"]
                                     .map(|label| seg_tool(label, label, p).opacity(0.6)),
-                            ),
+                            )
+                            .when(relabel, |d| {
+                                let label = s.speaker_label.clone();
+                                d.child(
+                                    seg_tool("seg-relabel", "Relabel", p)
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.relabel(label.clone(), cx)
+                                        })),
+                                )
+                            }),
                     )
                 })
                 .into_any_element()
@@ -510,65 +499,6 @@ fn seg_tool(
 /// The low-confidence badge's ring (#4a4d55).
 fn c4a(p: &Palette) -> gpui_kit::Hsla {
     p.fg4.opacity(0.8)
-}
-
-fn actions(p: &Palette, cx: &mut Context<Workspace>) -> AnyElement {
-    div()
-        .max_w(rpx(860.))
-        .px(rpx(20.))
-        .py(rpx(16.))
-        .flex()
-        .flex_col()
-        .gap(rpx(6.))
-        .children(demo::actions().into_iter().enumerate().map(|(i, a)| {
-            let (name, color) = demo::PEOPLE[a.owner];
-            let at = a.at;
-            div()
-                .flex()
-                .items_center()
-                .gap(rpx(12.))
-                .p(rpx(10.))
-                .border_1()
-                .border_color(p.bd)
-                .rounded(px(6.))
-                .bg(p.panel)
-                .child(
-                    div()
-                        .size(rpx(14.))
-                        .flex_none()
-                        .rounded(px(3.))
-                        .border(px(1.5))
-                        .border_color(c4a(p)),
-                )
-                .child(div().flex_1().min_w_0().text_color(p.text).child(a.text))
-                .child(
-                    div()
-                        .w(rpx(120.))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap(rpx(6.))
-                        .text_size(ts::BODY)
-                        .text_color(p.fg_chip)
-                        .child(ui::dot(7., p.speaker(Some(color))))
-                        .child(name),
-                )
-                .child(
-                    div()
-                        .w(rpx(70.))
-                        .flex_none()
-                        .text_size(ts::BODY)
-                        .text_color(p.fg2)
-                        .child(a.due),
-                )
-                .child(
-                    div().w(rpx(70.)).flex_none().child(
-                        ui::stamp(("act", i), at, true, p)
-                            .on_click(cx.listener(move |this, _, _, cx| this.cue(at, cx))),
-                    ),
-                )
-        }))
-        .into_any_element()
 }
 
 fn notes(p: &Palette, cx: &mut Context<Workspace>) -> AnyElement {

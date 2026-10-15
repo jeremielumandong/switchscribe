@@ -60,6 +60,15 @@ pub struct TranscriptFile {
     pub lines: Vec<TranscriptLine>,
 }
 
+impl TranscriptFile {
+    /// Read a meeting's `transcript.json`.
+    pub fn load(dir: &Path) -> Result<TranscriptFile> {
+        let path = dir.join(TRANSCRIPT_FILE);
+        let text = std::fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
+        serde_json::from_str(&text).map_err(|e| Error::Engine(format!("{}: {e}", path.display())))
+    }
+}
+
 /// Transcribe the meeting in `dir`. `progress` receives `0.0..=1.0`; setting `cancel`
 /// stops between chunks. Writes `transcript.json` and returns the merged segments.
 pub fn transcribe_meeting(

@@ -72,10 +72,47 @@ model manager.
 
 Diarization on the Teams track, Name-a-speaker card, People screen, voiceprint matching.
 
+- [x] Diarization of the Teams track with sherpa-onnx (pyannote segmentation 3.0 and
+      NeMo TitaNet-small embeddings), after transcription; transcript lines take the
+      speaker they overlap most; `speakers.json` keeps each cluster's sample and clips.
+- [x] Voiceprint matching: one-to-one, attendees first, non-attendees only on a high
+      score; high confidence names the speaker, medium suggests ("?" badge).
+- [x] Voiceprints sealed with DPAPI on Windows (store migration 2); the user's own
+      voiceprint grows from the mic track after every meeting; the user is a person
+      from the first start.
+- [x] Name-a-speaker card: clips to play, suggestions ranked by voice with confidence,
+      a typed name, Remember this voice, Later; Relabel on a Teams line reopens it.
+- [x] People screen: meetings heard, samples, last heard; Play sample, Merge, Forget
+      voice.
+- [x] Settings → Models: the speaker models download with the first transcription
+      model or on their own; the stepper shows Identify speakers.
+- [ ] Real-machine check: a Teams call with three or more people; name one speaker,
+      record another call with them and see them named automatically.
+
 ## M4 Agent
 
 MCP server, CLI runner, summary templates, Summary and Action items tabs, Ask panel, FTS
 search filters.
+
+- [x] CLI runner: Claude Code, Codex and Gemini CLI found on PATH (PATHEXT, so `.cmd`
+      shims count), run headless with the prompt on stdin, no console window, a
+      timeout and Stop; the CLI's own sign-in, no API keys.
+- [x] Summaries after every transcription (Settings switch) and on Re-run summary:
+      five templates picked from the title and editable in Settings; the CLI returns
+      JSON whose every line carries a time; owners matched to People; the stepper
+      shows Summarize. Store migration 3: summaries, action items, pending actions.
+- [x] Summary and Action items tabs from the store; status Open/Done (re-runs keep the
+      status of items they keep); the cross-meeting Action items screen with Show done.
+- [x] MCP server, `switchscribe mcp [--ask]` over stdio: list_meetings, get_transcript,
+      get_summary, search_meetings, get_action_items, update_summary,
+      create_jira_issue. Writes from the Ask panel wait as approve/deny cards.
+- [x] Ask panel: this meeting or all meetings, the CLI reads through the MCP server,
+      answers carry timestamp chips that open the moment, Stop, follow-ups keep the
+      conversation; Settings shows the `claude mcp add` line for the user's own CLI.
+- [x] Search filters: person and Past week / Past month.
+- [ ] Real-machine check: on Windows with Claude Code installed through npm
+      (`claude.cmd`), a call summarizes with no console window flashing; Ask answers
+      with chips; Codex and Gemini CLI flags against their current releases.
 
 ## M5 Detection and integrations
 
@@ -97,11 +134,23 @@ Live captions, onboarding, error states, signed installer and auto-update.
 - Mini recorder: snap to screen edges, and expand on hover with the title and a live
   caption line (with M6 captions).
 - Settings: a test recording with playback (onboarding, M6).
-- Echo bleed: match mic segments against the loopback track (M3).
+- Echo bleed: match mic segments against the loopback track (M3 leaves the user's
+  own voice out of the Teams-track library, which hides most of it).
+- Re-identify speakers in meetings transcribed before the speaker models were
+  installed (`transcript.json` is kept for this), and a Re-enroll action on People.
+- Delete a person outright (People only forgets the voice today).
 - GPU builds: a `vulkan` (Windows/Linux) and `cuda` feature pass through to whisper-rs;
   the release pipeline (M6) decides which build ships.
 - A Retry action for a failed transcription (today it retries at the next start).
 - Drag the playhead (click-to-seek only today) and keyboard shortcuts for the player
   (space, arrows).
+- Stop and timeouts kill the CLI process, but a `.cmd` shim's child (node) can outlive
+  it on Windows; a job object would take the whole tree.
+- `--demo` in the Ask panel runs a second, separate demo store, so changes the agent
+  proposes there never reach the app's cards (the demo seeds one card instead).
+- `export_meeting` over MCP and real Jira issues for `create_jira_issue` (M5; approving
+  one today says Jira is not connected).
+- Summaries for long meetings: the whole transcript goes in one prompt; split past the
+  CLI's context if three-hour calls show up.
 - Large meetings: the player holds 24 kHz 16-bit audio in memory (about 170 MB an
   hour); stream from the Opus files if long recordings make that a problem.
