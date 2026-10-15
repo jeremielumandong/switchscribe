@@ -7,19 +7,25 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["whisper"]
+default = ["whisper", "sherpa"]
 # whisper.cpp through whisper-rs (CPU). Off for quick builds that only need the traits.
 whisper = ["dep:whisper-rs"]
+# sherpa-onnx (prebuilt static libraries, fetched at build time): diarization and voiceprints.
+sherpa = ["dep:sherpa-onnx"]
 # GPU backends for whisper.cpp; each needs its SDK at build time.
 vulkan = ["whisper", "whisper-rs/vulkan"]
 cuda = ["whisper", "whisper-rs/cuda"]
 
 [dependencies]
 switchscribe-capture.workspace = true
+switchscribe-speakers.workspace = true
 switchscribe-store.workspace = true
+bzip2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sherpa-onnx = { workspace = true, optional = true }
+tar.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 ureq.workspace = true

@@ -38,6 +38,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 # CMake is needed at build time); WASAPI for capture and sysinfo to find Teams on Windows.
 opus = "0.4"
 cpal = "0.18"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 ogg = "0.9"
 wasapi = "0.26"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
@@ -50,6 +51,9 @@ whisper-rs = "0.16"
 # Model downloads: blocking HTTPS, verified against the server's SHA-256.
 ureq = { version = "3", features = ["platform-verifier"] }
 sha2 = "0.11"
+bzip2 = "0.6"
+tar = "0.4"
+sherpa-onnx = { version = "1.13", default-features = false, features = ["shared"] }
 
 # serialization
 serde = { version = "1", features = ["derive"] }

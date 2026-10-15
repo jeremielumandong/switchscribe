@@ -64,6 +64,34 @@ impl Person {
     }
 }
 
+/// A person's stored voiceprint (decrypted).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StoredVoiceprint {
+    /// The person.
+    pub person_id: i64,
+    /// Mean speaker embedding.
+    pub embedding: Vec<f32>,
+    /// How many clusters were averaged into it.
+    pub samples: u32,
+    /// A moment to play as their sample: meeting id, start and end in milliseconds.
+    pub sample: Option<(String, i64, i64)>,
+}
+
+/// What the People screen shows per person.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PersonStats {
+    /// The person.
+    pub person_id: i64,
+    /// Meetings they were heard in.
+    pub meetings: u32,
+    /// Start of the latest meeting they were heard in, seconds since the epoch.
+    pub last_heard: Option<i64>,
+    /// Embeddings averaged into their voiceprint (0 = no voiceprint).
+    pub samples: u32,
+    /// A moment to play as their sample.
+    pub sample: Option<(String, i64, i64)>,
+}
+
 /// A meeting in the index.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Meeting {
