@@ -32,6 +32,10 @@ pub struct Session {
     pub bookmarks: Vec<u64>,
     /// Bumped on every notes edit, so only the latest debounced save writes.
     pub notes_generation: u64,
+    /// A test recording (never stops on its own).
+    pub test: bool,
+    /// When the Teams track last had sound.
+    pub quiet_since: std::time::Instant,
     pub(crate) _tick: Task<()>,
     pub(crate) _notes_changed: Subscription,
 }

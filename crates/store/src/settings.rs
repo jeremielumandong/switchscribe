@@ -59,6 +59,8 @@ pub struct DetectionSettings {
     pub auto_record: bool,
     /// Stop after the Teams session has been silent this long.
     pub auto_stop_minutes: u32,
+    /// Titles to record without asking.
+    pub always_record: Vec<String>,
 }
 
 impl Default for DetectionSettings {
@@ -67,6 +69,7 @@ impl Default for DetectionSettings {
             auto_detect: true,
             auto_record: false,
             auto_stop_minutes: 3,
+            always_record: Vec::new(),
         }
     }
 }

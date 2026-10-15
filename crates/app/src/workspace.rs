@@ -61,6 +61,10 @@ pub struct Startup {
     pub voiceprints: Vec<StoredVoiceprint>,
     /// Per-person numbers for the People screen.
     pub people_stats: Vec<PersonStats>,
+    /// Requests from later launches (`None` in the demo).
+    pub listener: Option<crate::instance::Listener>,
+    /// What this launch was asked to do (a link to a moment).
+    pub request: crate::instance::Request,
 }
 
 /// The main pane's screens.
@@ -123,6 +127,10 @@ pub struct Workspace {
     pub(crate) speakers: Speakers,
     /// Summaries, action items and the CLI.
     pub(crate) agent: Agent,
+    /// Meeting detection.
+    pub(crate) detect: crate::detection::Detect,
+    /// Requests from later launches.
+    listener: Option<crate::instance::Listener>,
     ask: Entity<AskPanel>,
     ask_open: bool,
     search_input: Entity<InputState>,
@@ -134,14 +142,14 @@ pub struct Workspace {
     /// The recording in progress.
     pub(crate) recording: Option<Session>,
     /// A recording is being set up.
-    starting: bool,
+    pub(crate) starting: bool,
     /// Amber notices above the main pane (capture fallbacks, lost devices).
     pub(crate) banners: Vec<Banner>,
     /// The selected meeting's notes and bookmarks, read from its folder.
     pub(crate) notes_doc: Option<(String, NotesDoc)>,
     devices: Vec<InputDevice>,
     /// This window, for bringing it forward from the mini recorder and the tray.
-    window: AnyWindowHandle,
+    pub(crate) window: AnyWindowHandle,
     mini: Option<AnyWindowHandle>,
     #[cfg(windows)]
     tray: Option<crate::tray::Tray>,
@@ -206,6 +214,8 @@ impl Workspace {
             jobs: Jobs::new(s.installed_models),
             speakers: Speakers::new(s.voiceprints, s.people_stats, window, cx),
             agent: Agent::default(),
+            detect: Default::default(),
+            listener: s.listener,
             ask,
             ask_open,
             search_input,
@@ -234,6 +244,9 @@ impl Workspace {
         this.load_summary(cx);
         this.load_all_actions(cx);
         this.detect_cli(cx);
+        this.sync_detection(cx);
+        this.handle_request(s.request, window, cx);
+        this.poll_instance(window, cx);
         this.load_notes(cx);
         this.load_playback(cx);
         // Meetings left mid-processing (a quit, a crash) pick up where they were.
@@ -252,6 +265,49 @@ impl Workspace {
         #[cfg(windows)]
         this.poll_tray(window, cx);
         this
+    }
+
+    /// Act on a launch's request: a link opens its moment, anything brings the window up.
+    fn handle_request(
+        &mut self,
+        request: crate::instance::Request,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let crate::instance::Request::Open(id, secs) = request {
+            if self.meetings.iter().any(|m| m.id == id) {
+                self.open_moment(&id, secs, cx);
+            } else {
+                self.banners.push(Banner::plain(
+                    "That link points to a meeting that is not here.",
+                ));
+            }
+        }
+        window.activate_window();
+        cx.notify();
+    }
+
+    fn poll_instance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.listener.is_none() {
+            return;
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(300))
+                    .await;
+                let ok = this.update_in(cx, |ws, window, cx| {
+                    let requests = ws.listener.as_ref().map(|l| l.take()).unwrap_or_default();
+                    for r in requests {
+                        ws.handle_request(r, window, cx);
+                    }
+                });
+                if ok.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     /// The selected meeting.
@@ -517,9 +573,30 @@ impl Workspace {
 
     /// Create the meeting and its folder and start both tracks, off the UI thread.
     fn start_recording(&mut self, test: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_recording_as(None, test, window, cx);
+    }
+
+    /// Record a detected meeting under its name.
+    pub(crate) fn start_titled_recording(
+        &mut self,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_recording_as(Some(title), false, window, cx);
+    }
+
+    fn start_recording_as(
+        &mut self,
+        title: Option<String>,
+        test: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.starting || self.recording.is_some() {
             return;
         }
+        self.ignore_offer(cx);
         self.banners.clear();
         let backend = match self.backend() {
             Ok(b) => b,
@@ -536,7 +613,7 @@ impl Workspace {
         let title = if test {
             "Test recording".to_owned()
         } else {
-            recording::default_title(now)
+            title.unwrap_or_else(|| recording::default_title(now))
         };
         let dir = self.meeting_dir(&id);
         let me = self.people.iter().find(|p| p.is_me).cloned();
@@ -572,7 +649,9 @@ impl Workspace {
             let _ = this.update_in(cx, |ws, window, cx| {
                 ws.starting = false;
                 match started {
-                    Ok(recorder) => ws.begin_session(id, title, dir, recorder, me, now, window, cx),
+                    Ok(recorder) => {
+                        ws.begin_session(id, title, dir, recorder, me, now, test, window, cx)
+                    }
                     Err(e) => {
                         ws.banners
                             .push(Banner::plain(format!("Could not start recording: {e}")));
@@ -593,6 +672,7 @@ impl Workspace {
         recorder: Recorder,
         me: Option<Person>,
         now: DateTime<Local>,
+        test: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -636,6 +716,8 @@ impl Workspace {
             notes,
             bookmarks: Vec::new(),
             notes_generation: 0,
+            test,
+            quiet_since: std::time::Instant::now(),
             _tick: tick,
             _notes_changed: notes_changed,
         });
@@ -683,6 +765,7 @@ impl Workspace {
         if let Some(mini) = self.mini {
             let _ = mini.update(cx, |_, window, _| window.refresh());
         }
+        self.check_auto_stop(cx);
         cx.notify();
     }
 
@@ -1758,6 +1841,7 @@ impl Workspace {
                     .child(self.render_models(p, cx))
                     .child(ui::section_label("Agent", p.fg3).mt(rpx(18.)).mb(rpx(4.)))
                     .child(agent_view::settings_agent(self, p, cx))
+                    .child(crate::detection::settings_detection(self, p, cx))
                     .child(
                         ui::section_label("Everything else", p.fg3)
                             .mt(rpx(18.))
@@ -1774,22 +1858,6 @@ impl Workspace {
                     .child(row(
                         "Settings file",
                         text(self.paths.settings_file().display().to_string()),
-                    ))
-                    .child(row("Detect meetings", on(s.detection.auto_detect)))
-                    .child(row(
-                        "When detected",
-                        text(
-                            if s.detection.auto_record {
-                                "Record"
-                            } else {
-                                "Ask first"
-                            }
-                            .to_owned(),
-                        ),
-                    ))
-                    .child(row(
-                        "Auto-stop after silence",
-                        text(format!("{} min", s.detection.auto_stop_minutes)),
                     ))
                     .child(row("Live captions", on(s.models.live_captions)))
                     .child(row(

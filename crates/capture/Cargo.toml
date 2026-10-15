@@ -18,6 +18,7 @@ tracing.workspace = true
 [target.'cfg(windows)'.dependencies]
 sysinfo.workspace = true
 wasapi.workspace = true
+windows = { workspace = true, features = ["Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile.workspace = true

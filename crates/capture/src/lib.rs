@@ -3,9 +3,10 @@
 //!
 //! [`Recorder`] runs a recording; [`Backend::system`] opens the real devices on Windows and
 //! [`Backend::fake`] two synthetic voices anywhere else (tests, `SWITCHSCRIBE_FAKE_AUDIO`).
-//! Meeting detection arrives in M5.
+//! [`detect`] watches for Teams calls.
 
 pub mod audio;
+pub mod detect;
 pub mod ogg_opus;
 mod playback;
 mod recorder;

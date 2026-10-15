@@ -189,3 +189,20 @@ pub fn empty_state(title: &'static str, body: impl Into<SharedString>, p: &Palet
                 .child(body.into()),
         )
 }
+
+/// A 14 px checkbox (the label and click handler belong to the caller).
+pub fn checkbox(on: bool, p: &Palette) -> Div {
+    div()
+        .size(rpx(14.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(3.))
+        .border_1()
+        .border_color(if on { p.fg } else { p.fg4 })
+        .when(on, |d| d.bg(p.fg))
+        .text_size(ts::TINY)
+        .text_color(p.on_light)
+        .when(on, |d| d.child("✓"))
+}

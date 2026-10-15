@@ -648,22 +648,6 @@ fn merge_voiceprints(
 }
 
 /// A checkbox: a 14 px box, ticked when `on`.
-fn checkbox(on: bool, p: &Palette) -> gpui_kit::Div {
-    div()
-        .size(rpx(14.))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(3.))
-        .border_1()
-        .border_color(if on { p.fg } else { p.fg4 })
-        .when(on, |d| d.bg(p.fg))
-        .text_size(ts::TINY)
-        .text_color(p.on_light)
-        .when(on, |d| d.child("✓"))
-}
-
 /// The Name-a-speaker card: clips to listen to, voice-matched suggestions, a name field.
 pub fn name_card(
     ws: &Workspace,
@@ -879,7 +863,7 @@ pub fn name_card(
                         .text_color(p.fg_ctl)
                         .cursor_pointer()
                         .on_click(cx.listener(|ws, _, _, cx| ws.toggle_remember(cx)))
-                        .child(checkbox(remember, p))
+                        .child(ui::checkbox(remember, p))
                         .child("Remember this voice"),
                 )
                 .child(div().flex_1())
