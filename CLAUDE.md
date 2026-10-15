@@ -56,6 +56,10 @@ Nothing depends on `app`.
   timestamp chip.
 - **One design system.** Port Switchyard / switchhead UI modules rather than inventing
   new ones. Fixed sizes use `appearance::rpx`, text sizes `appearance::ts::*`.
+- **No console windows.** Release builds are GUI-subsystem binaries
+  (`windows_subsystem = "windows"` in `main.rs`). Every child process (the coding CLI,
+  `explorer`, `git`, anything) starts through `switchscribe_agent::process::command`,
+  which sets `CREATE_NO_WINDOW`; clippy rejects `Command::new` elsewhere.
 - **Schema changes are new migrations** appended to `MIGRATIONS` in
   `crates/store/src/db.rs`; never edit a shipped one.
 

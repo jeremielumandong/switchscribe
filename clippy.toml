@@ -1,2 +1,8 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
+
+# Windows: every child process goes through switchscribe_agent::process::command, which
+# sets CREATE_NO_WINDOW so no console window flashes up.
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "use switchscribe_agent::process::command (no console window on Windows)" },
+]
