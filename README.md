@@ -8,15 +8,15 @@ items that your coding CLI (Claude Code, Codex, Gemini CLI) can query. It is a s
 [switchhead](https://github.com/jeremielumandong/switchhead) and Switchyard and shares
 their GPUI stack and design system.
 
-> Early development. **M0 (skeleton)** through **M5 (detection and integrations)** are
-> in: the app shell, the SQLite store, recording Teams plus your mic to two Opus tracks
+> Early development. All seven milestones, **M0 (skeleton)** through **M6 (live and
+> polish)**, are built and waiting on real-machine checks on Windows: the app shell, the SQLite store, recording Teams plus your mic to two Opus tracks
 > with a live view, a floating mini recorder and a tray icon, on-device Whisper
 > transcription after the call, an audio player synced to the transcript, speaker
 > identification with a voiceprint library, summaries and action items written by your
 > coding CLI, the Ask panel and an MCP server, a Record prompt when a Teams call starts,
 > meeting names and invitees from your Outlook calendar, action items sent to Jira, and
-> Markdown, Word, SRT, VTT and JSON exports. Live captions, onboarding and the installer
-> arrive in M6. See
+> Markdown, Word, SRT, VTT and JSON exports, live captions, first-run setup, a per-user
+> installer and in-app updates. See
 > [`PLAN.md`](PLAN.md) and the full [build plan](docs/BUILD-PLAN.md).
 
 ![The demo data: a meeting's summary with the Ask panel open](docs/screenshots/demo-summary.png)
@@ -31,7 +31,19 @@ their GPUI stack and design system.
 
 ![A Teams call detected: the Record prompt](docs/screenshots/detect-prompt.png)
 
+![Live captions while recording](docs/screenshots/live-captions.png)
+
+![First-run setup: the audio test](docs/screenshots/setup-audio.png)
+
 ![Action items picked for Jira](docs/screenshots/action-items-jira.png)
+
+## Install
+
+Download `switchscribe-setup-<version>-x64.exe` from
+[Releases](https://github.com/jeremielumandong/switchscribe/releases) and run it. It
+installs for your account only (no admin rights), can start with Windows in the tray, and
+updates itself from the title bar's Update button. Uninstalling keeps your data folder.
+Cutting a release is described in [`installer/README.md`](installer/README.md).
 
 ## Run it
 
@@ -56,6 +68,7 @@ downloads must stay next to the executable.
 | `SWITCHSCRIBE_DEMO=1` | Same as `--demo` |
 | `SWITCHSCRIBE_FAKE_AUDIO=1` | Record two synthetic voices instead of the devices (any OS; the demo always does) |
 | `SWITCHSCRIBE_FAKE_MEETING=<title>` | Pretend a Teams call named `<title>` starts a few seconds after launch (any OS) |
+| `SWITCHSCRIBE_ONBOARDING=1` / `0` | Show first-run setup (even in the demo) / never show it |
 | `SWITCHSCRIBE_ZOOM` | UI zoom, `0.7`–`2.0` |
 | `SWITCHSCRIBE_LOG` | Log filter, e.g. `debug` |
 

@@ -21,6 +21,10 @@ use switchscribe_store::NewSegment;
 pub use job::{JobInput, TranscriptFile, transcribe_meeting};
 pub use vad::{EnergyVad, Vad};
 
+/// Whether this build runs Whisper on a GPU (the `vulkan` or `cuda` feature). Release
+/// builds are CPU-only, so they should not recommend the large models.
+pub const GPU_BUILD: bool = cfg!(any(feature = "vulkan", feature = "cuda"));
+
 /// Sample rate the speech models take.
 pub const RATE: u32 = 16_000;
 

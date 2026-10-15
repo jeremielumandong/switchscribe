@@ -172,10 +172,13 @@ impl Workspace {
     }
 }
 
-fn load_whisper(path: &Path, use_gpu: bool) -> switchscribe_pipeline::Result<Box<dyn SpeechEngine>> {
-    Ok(Box::new(switchscribe_pipeline::whisper::WhisperEngine::load(
-        path, use_gpu,
-    )?))
+fn load_whisper(
+    path: &Path,
+    use_gpu: bool,
+) -> switchscribe_pipeline::Result<Box<dyn SpeechEngine>> {
+    Ok(Box::new(
+        switchscribe_pipeline::whisper::WhisperEngine::load(path, use_gpu)?,
+    ))
 }
 
 #[cfg(test)]
@@ -215,7 +218,10 @@ mod tests {
     fn small_models_caption_first() {
         let mut installed: HashSet<&'static str> = ["large-v3-turbo"].into();
         assert_eq!(live_model(&installed, false), None);
-        assert_eq!(live_model(&installed, true).map(|m| m.id), Some("large-v3-turbo"));
+        assert_eq!(
+            live_model(&installed, true).map(|m| m.id),
+            Some("large-v3-turbo")
+        );
         installed.insert("small");
         installed.insert("base");
         assert_eq!(live_model(&installed, true).map(|m| m.id), Some("base"));

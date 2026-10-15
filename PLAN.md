@@ -150,6 +150,30 @@ Teams auto-detect prompt, Graph calendar, Jira export, Markdown/Word/SRT export.
 
 Live captions, onboarding, error states, signed installer and auto-update.
 
+- [x] Live captions (Settings → Models, also from the live view mid-call): each track cut
+      at pauses and captioned by Base or Small with greedy decoding; shown in the live
+      view, newest line lighter, and in the mini recorder, which grows on hover.
+- [x] First-run setup: welcome and what stays local, audio with a live meter test, the
+      model for this machine, your name and a headset tip, calendar and Jira, the consent
+      notice; skippable, and Settings → Run setup again.
+- [x] Error states: a missing coding CLI turns the title-bar dot amber with the reason;
+      captions without a model warn and keep recording (mic lost, Teams fallback, missing
+      model and the empty state were already in).
+- [x] Installer: Inno Setup, per user, no admin; Start with Windows (`--background`
+      opens to the tray); `switchscribe://` registered; uninstall keeps the data folder.
+- [x] Release workflow on `v*` tags: release build, optional signing (PFX or Azure
+      Trusted Signing), installer plus `.sha256`, GitHub release.
+- [x] Updates: a check every six hours (Settings → Updates, or off), Update button in the
+      title bar, download with SHA-256 check, silent install and restart.
+- [x] Keep audio: Forever / 7 / 30 / 90 days, enforced for finished meetings at start.
+- [ ] Real-machine check: cut `v0.1.0` (bump the version, tag, push) and install on a
+      fresh Windows machine; setup through to the first recorded meeting without help.
+- [ ] Real-machine check: live captions keep up on a laptop CPU with Base during a real
+      call; the mini recorder grows on hover.
+- [ ] Real-machine check: install `v0.1.1` over it from the Update button; the app
+      restarts on the new version with its data intact; Start with Windows opens to the
+      tray.
+
 ## Follow-ups
 
 - Virtualize the sidebar and transcript lists (`uniform_list`) before real meeting
@@ -159,9 +183,15 @@ Live captions, onboarding, error states, signed installer and auto-update.
 - Windows icon resource (switchhead's `build.rs`) once there is an icon.
 - Global hotkeys (Ctrl+Shift+R / Ctrl+Shift+B work only while a switchscribe window
   has focus); `global-hotkey` would make them system-wide.
-- Mini recorder: snap to screen edges, and expand on hover with the title and a live
-  caption line (with M6 captions).
-- Settings: a test recording with playback (onboarding, M6).
+- Mini recorder: snap to screen edges.
+- Settings: a test recording with playback (onboarding has a meter test only).
+- Verify the update installer's Authenticode signature before running it
+  (`WinVerifyTrust`, signer matching the running exe) and refuse unsigned updates once
+  releases are signed; sign the embedded uninstaller (Inno `SignTool=`).
+- Decide whether a GPU (Vulkan) build ships alongside the CPU one.
+- Live captions: a vocabulary prompt (glossary, attendees) and showing who on the Teams
+  track speaks (live diarization).
+- A "Delete everything" button in Settings (Storage & privacy).
 - Echo bleed: match mic segments against the loopback track (M3 leaves the user's
   own voice out of the Teams-track library, which hides most of it).
 - Re-identify speakers in meetings transcribed before the speaker models were

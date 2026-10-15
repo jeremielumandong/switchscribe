@@ -29,6 +29,12 @@ pub struct Settings {
     /// Calendar and Jira (tokens are not here: they are sealed in the store's secrets).
     #[serde(default)]
     pub integrations: IntegrationSettings,
+    /// First-run setup was finished or skipped.
+    #[serde(default)]
+    pub onboarded: bool,
+    /// Do not check GitHub for newer versions.
+    #[serde(default)]
+    pub skip_update_check: bool,
 }
 
 /// What the Teams track captures.
@@ -209,7 +215,7 @@ impl Default for AgentSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StorageSettings {
-    /// Delete meeting audio after this many days; `None` keeps it.
+    /// Delete the audio of finished meetings after this many days; `None` keeps it.
     pub keep_audio_days: Option<u32>,
     /// The notice to paste into a meeting's chat before recording.
     pub consent_notice: String,
@@ -218,7 +224,8 @@ pub struct StorageSettings {
 impl Default for StorageSettings {
     fn default() -> Self {
         Self {
-            keep_audio_days: Some(30),
+            // Deleting recordings is the user's call, never a default.
+            keep_audio_days: None,
             consent_notice: "Heads up: I'm recording this meeting locally with switchscribe \
                              to take notes. Let me know if you'd rather I didn't."
                 .to_owned(),

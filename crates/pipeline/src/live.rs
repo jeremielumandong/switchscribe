@@ -134,17 +134,17 @@ impl Cutter {
         }
         self.next = block.start + block.samples.len() as u64;
         self.carry.extend_from_slice(&block.samples);
-        let whole = self.carry.len() / DECIMATE * DECIMATE;
+        let (groups, _) = self.carry.as_chunks::<DECIMATE>();
         self.buf.extend(
-            self.carry[..whole]
-                .chunks_exact(DECIMATE)
+            groups
+                .iter()
                 .map(|c| c.iter().sum::<f32>() / DECIMATE as f32),
         );
-        self.carry.drain(..whole);
-        if self.buf.len() >= MAX_PIECE {
-            self.cut(out);
-        } else if self.buf.len() >= MIN_PIECE && rms(&self.buf[self.buf.len() - PAUSE..]) < SPEECH_RMS
-        {
+        self.carry.drain(..groups.len() * DECIMATE);
+        let full = self.buf.len() >= MAX_PIECE;
+        let paused =
+            self.buf.len() >= MIN_PIECE && rms(&self.buf[self.buf.len() - PAUSE..]) < SPEECH_RMS;
+        if full || paused {
             self.cut(out);
         }
     }

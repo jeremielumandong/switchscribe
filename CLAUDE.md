@@ -102,6 +102,12 @@ Nothing depends on `app`.
 - `SWITCHSCRIBE_FAKE_MEETING="<title>"` fakes a Teams call a few seconds after launch,
   so the Record prompt, calendar naming and auto-stop can be tried off Windows (the
   demo's calendar has an event for "Cerberus rollout sync").
+- `SWITCHSCRIBE_ONBOARDING=1` shows first-run setup (also in the demo); `=0` hides it.
+  Live captions in the demo or with fake audio read the demo transcript back, since
+  Whisper hears nothing in synthetic voices.
+- Releases: bump `[workspace.package] version`, tag `vX.Y.Z`, push; the Release workflow
+  builds the installer (see `installer/README.md`). `--background` starts hidden in the
+  tray on Windows.
 - One switchscribe runs per data folder: a second launch hands over to the first through
   `instance.port` and exits. Give each test run its own `SWITCHSCRIBE_DATA`.
 - `SWITCHSCRIBE_TEST_CLI=claude` (or `codex`, `gemini`) runs the agent test that

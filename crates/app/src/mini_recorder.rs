@@ -55,7 +55,9 @@ pub fn open(ws: WeakEntity<Workspace>, cx: &mut App) -> Option<AnyWindowHandle> 
         app_id: Some("switchscribe".into()),
         ..Default::default()
     };
-    match gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| MiniRecorder { ws, hovered: false })) {
+    match gpui_kit::open_window(options, cx, |_, cx| {
+        cx.new(|_| MiniRecorder { ws, hovered: false })
+    }) {
         Ok((handle, _)) => Some(handle),
         Err(e) => {
             tracing::warn!(error = %e, "could not open the mini recorder");

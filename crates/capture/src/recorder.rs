@@ -255,7 +255,11 @@ impl Recorder {
     /// for live captions. A later call replaces the earlier receiver.
     pub fn tap(&self) -> Receiver<Tapped> {
         let (tx, rx) = mpsc::channel();
-        *self.shared.tap.lock().unwrap_or_else(PoisonError::into_inner) = Some(tx);
+        *self
+            .shared
+            .tap
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(tx);
         rx
     }
 

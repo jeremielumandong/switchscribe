@@ -619,7 +619,9 @@ impl Workspace {
     /// Settings → Models: the catalog with download, use and remove, and the GPU switch.
     pub(crate) fn render_models(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let chosen = self.transcription_model().map(|m| m.id);
-        let recommended = models::recommended(self.settings.models.use_gpu).id;
+        let recommended =
+            models::recommended(self.settings.models.use_gpu && switchscribe_pipeline::GPU_BUILD)
+                .id;
         let link = |id: (&'static str, usize), label: &'static str| {
             div()
                 .id(id)
@@ -829,8 +831,13 @@ impl Workspace {
                     .child(div().text_size(ts::BODY).text_color(p.fg3).child(live_note)),
             )
             .child(
-                ui::button("live-captions", if captions { "On" } else { "Off" }, Kind::Outline, p)
-                    .on_click(cx.listener(|ws, _, _, cx| ws.toggle_live_captions(cx))),
+                ui::button(
+                    "live-captions",
+                    if captions { "On" } else { "Off" },
+                    Kind::Outline,
+                    p,
+                )
+                .on_click(cx.listener(|ws, _, _, cx| ws.toggle_live_captions(cx))),
             );
         div()
             .flex()

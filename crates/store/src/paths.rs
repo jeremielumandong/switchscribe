@@ -70,6 +70,37 @@ impl Paths {
         self.data.join("logs")
     }
 
+    /// Delete the audio tracks (`*.opus`) of finished meetings that started more than
+    /// `keep_days` days before `now` (Unix seconds). Transcripts, notes and summaries stay.
+    /// Meetings still recording, processing or waiting for speaker names keep their audio
+    /// (naming plays clips from it). Returns how many meetings lost their audio.
+    pub fn prune_audio(&self, meetings: &[crate::Meeting], keep_days: u32, now: i64) -> usize {
+        let cutoff = now - i64::from(keep_days) * 86_400;
+        let mut pruned = 0;
+        for m in meetings
+            .iter()
+            .filter(|m| m.status == crate::MeetingStatus::Ready && m.started_at < cutoff)
+        {
+            let Ok(entries) = std::fs::read_dir(self.meeting_dir(&m.id)) else {
+                continue;
+            };
+            let mut any = false;
+            for e in entries.flatten() {
+                let path = e.path();
+                if path.extension().is_some_and(|x| x == "opus") {
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => any = true,
+                        Err(err) => {
+                            tracing::warn!(path = %path.display(), error = %err, "could not delete old audio");
+                        }
+                    }
+                }
+            }
+            pruned += usize::from(any);
+        }
+        pruned
+    }
+
     /// Create the data folder and `meetings/` if they are missing.
     pub fn ensure(&self) -> Result<()> {
         let dir = self.meetings_dir();
@@ -87,6 +118,43 @@ mod tests {
         assert_eq!(p.settings_file(), PathBuf::from("/data/settings.json"));
         assert_eq!(p.db_file(), PathBuf::from("/data/switchscribe.db"));
         assert_eq!(p.meeting_dir("m1"), PathBuf::from("/data/meetings/m1"));
+    }
+
+    #[test]
+    fn old_finished_audio_is_pruned() {
+        use crate::{Meeting, MeetingStatus};
+        let dir = tempfile::tempdir().unwrap();
+        let p = Paths::at(dir.path());
+        let now = 100 * 86_400;
+        let meeting = |id: &str, days_ago: i64, status| Meeting {
+            id: id.into(),
+            title: id.into(),
+            started_at: now - days_ago * 86_400,
+            duration_secs: 60,
+            source_app: "Teams".into(),
+            status,
+            attendees: Vec::new(),
+        };
+        let all = [
+            meeting("old", 40, MeetingStatus::Ready),
+            meeting("new", 5, MeetingStatus::Ready),
+            meeting("unnamed", 40, MeetingStatus::NeedsLabels),
+        ];
+        for m in &all {
+            let d = p.meeting_dir(&m.id);
+            std::fs::create_dir_all(&d).unwrap();
+            for f in ["mic.opus", "remote.opus", "transcript.json"] {
+                std::fs::write(d.join(f), b"x").unwrap();
+            }
+        }
+        assert_eq!(p.prune_audio(&all, 30, now), 1);
+        let old = p.meeting_dir("old");
+        assert!(!old.join("mic.opus").exists() && !old.join("remote.opus").exists());
+        assert!(old.join("transcript.json").exists());
+        assert!(p.meeting_dir("new").join("mic.opus").exists());
+        assert!(p.meeting_dir("unnamed").join("mic.opus").exists());
+        // Nothing left to prune.
+        assert_eq!(p.prune_audio(&all, 30, now), 0);
     }
 
     #[test]

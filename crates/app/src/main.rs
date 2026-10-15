@@ -19,6 +19,7 @@ mod integrations_view;
 mod live_view;
 mod meeting_view;
 mod mini_recorder;
+mod onboarding;
 mod player_bar;
 mod processing;
 mod recording;
@@ -27,6 +28,7 @@ mod theme;
 #[cfg(windows)]
 mod tray;
 mod ui;
+mod updates;
 mod workspace;
 
 use std::borrow::Cow;
@@ -175,6 +177,9 @@ fn main() -> Result<()> {
         tracing::info!(?request, "handed over to the running switchscribe");
         return Ok(());
     }
+    // Started with Windows: open hidden, in the tray (the tray and a later launch show
+    // the window). Elsewhere there is no tray, so the window shows anyway.
+    let background = cfg!(windows) && request == instance::Request::Background;
     let state = startup(demo, request)?;
     let zoom = appearance::zoom();
 
@@ -195,6 +200,8 @@ fn main() -> Result<()> {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(960.), px(600.))),
                 app_id: Some("switchscribe".into()),
+                show: !background,
+                focus: !background,
                 ..TitleBar::window_options()
             };
             let opened = gpui_kit::open_window(options, cx, |window, cx| {
@@ -206,7 +213,9 @@ fn main() -> Result<()> {
                 return;
             }
             tracing::debug!(ms = started.elapsed().as_millis() as u64, "window opened");
-            cx.activate(true);
+            if !background {
+                cx.activate(true);
+            }
         });
     Ok(())
 }

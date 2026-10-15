@@ -313,3 +313,43 @@ Non-obvious calls, newest last. Append when you make one.
   voiceprints, models, settings) is never deleted by the uninstaller; reinstalling must
   not lose meetings. Only the program files, the shortcut, the `switchscribe://` key and
   the Run value go.
+
+## M6 live captions and polish (app)
+
+- **Captions tap the recorder, not the files.** `Recorder::tap` copies each block a track
+  writes (after resampling, without the silence padding) to one channel; padding shows up
+  as a jump in `start`, which the captioner treats as a pause. Captions never touch the
+  Opus files or slow the capture threads (the channel is unbounded and drained
+  continuously).
+- **Pieces are cut at pauses:** at least 2 s, ended by 0.5 s under 1% RMS, or forced at
+  8 s; silent pieces are skipped. One thread captions both tracks with greedy decoding
+  (`Options::fast`). If it falls behind, pieces beyond two waiting are dropped, oldest
+  first: captions should be current, and the post-call pass is the real transcript.
+- **Which model:** Base, else Small; a large model only when nothing smaller is installed
+  and the GPU is on. Without one, recording goes on and an amber banner offers the
+  download. Captions are not saved; the post-call transcript replaces them.
+- **Live speakers are tracks, not people:** the mic is you (your name and color), the
+  Teams track reads "Teams" in neutral gray; diarization only runs after the call.
+- **The mini recorder grows downward on hover** (title and latest line under the
+  controls), unlike the prototype's upward growth, so the buttons stay under the pointer
+  while the window resizes.
+- **`GPU_BUILD`:** release builds are CPU-only, so model recommendations (onboarding and
+  Settings) ignore the GPU switch unless the build has the `vulkan` or `cuda` feature;
+  CPU builds recommend Small.
+- **Onboarding reuses Settings' controls** (audio, models, integrations) and opens until
+  finished or skipped once (`onboarded` in settings.json; Settings → Run setup again).
+  The audio test records both tracks into `<data>/setup-test` for the meters and deletes
+  it. There is no separate 20-second voice enrollment: the mic track is the user by
+  definition, and M3 already keeps the user's voiceprint current from each meeting's mic
+  track, so the step asks for the user's name and recommends a headset.
+- **`--background`** (the installer's "Start with Windows") opens the window hidden on
+  Windows; the tray or another launch shows it (a hidden GPUI window shows on activate).
+  A background launch hands a `background` request to a running app, which ignores it.
+- **Audio retention defaults to Forever.** Settings showed "Keep audio: 30 days" before
+  anything enforced it; deleting recordings is now real, so it is the user's choice
+  (Forever / 7 / 30 / 90 days). It prunes only `Ready` meetings (a meeting waiting for
+  speaker names still needs clips) at start, off the UI thread.
+- **Missing CLI is amber** in the title bar (the dot), with the reason in the tooltip.
+- **Update checks** start a minute after launch and repeat every six hours, never in the
+  demo; failures are only shown when the user pressed Check now. Installing refuses while
+  recording.

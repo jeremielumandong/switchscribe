@@ -23,21 +23,29 @@ pub const SCHEME: &str = "switchscribe";
 pub enum Request {
     /// Come to the front.
     Show,
+    /// Started with Windows (`--background`): stay in the tray. A running app ignores it.
+    Background,
     /// Open a meeting at a moment (seconds).
     Open(String, i64),
 }
 
 impl Request {
-    /// The request a command line makes: a link argument, else Show.
+    /// The request a command line makes: a link argument, else Background for
+    /// `--background`, else Show.
     pub fn from_args(args: &[String]) -> Request {
-        args.iter()
-            .find_map(|a| parse_link(a))
-            .unwrap_or(Request::Show)
+        args.iter().find_map(|a| parse_link(a)).unwrap_or_else(|| {
+            if args.iter().any(|a| a == "--background") {
+                Request::Background
+            } else {
+                Request::Show
+            }
+        })
     }
 
     fn line(&self) -> String {
         match self {
             Request::Show => "show".into(),
+            Request::Background => "background".into(),
             Request::Open(id, t) => format!("open {id} {t}"),
         }
     }
@@ -46,6 +54,7 @@ impl Request {
         let mut parts = line.split_whitespace();
         match parts.next()? {
             "show" => Some(Request::Show),
+            "background" => Some(Request::Background),
             "open" => {
                 let id = parts.next()?;
                 let t = parts.next()?.parse().ok()?;
@@ -268,6 +277,14 @@ mod tests {
             Request::Open("2026-10-15-1000-aks".into(), 236)
         );
         assert_eq!(Request::from_args(&[]), Request::Show);
+        assert_eq!(
+            Request::from_args(&["--background".into()]),
+            Request::Background
+        );
+        assert_eq!(
+            Request::parse_line(&Request::Background.line()),
+            Some(Request::Background)
+        );
     }
 
     #[test]
