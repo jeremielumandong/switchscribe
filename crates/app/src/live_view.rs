@@ -17,6 +17,94 @@ use crate::theme::{MONO, Palette};
 use crate::ui::{self, Kind};
 use crate::workspace::Workspace;
 
+/// The captions so far, or why there are none.
+fn captions(ws: &Workspace, s: &Session, p: &Palette, cx: &mut Context<Workspace>) -> AnyElement {
+    let hint = |text: &'static str| {
+        div()
+            .text_size(ts::BODY)
+            .text_color(p.fg3)
+            .line_height(rpx(19.))
+            .child(text)
+    };
+    let Some(live) = &s.captions else {
+        return div()
+            .flex()
+            .flex_col()
+            .gap(rpx(8.))
+            .child(hint(
+                "Live captions are off. The full transcript is made after the call.",
+            ))
+            .child(
+                div()
+                    .id("live-captions-on")
+                    .text_size(ts::BODY)
+                    .text_color(p.fg_ctl)
+                    .cursor_pointer()
+                    .on_click(cx.listener(|ws, _, _, cx| ws.toggle_live_captions(cx)))
+                    .child("Turn on live captions"),
+            )
+            .into_any_element();
+    };
+    if live.blocks.is_empty() {
+        return hint("Listening…").into_any_element();
+    }
+    let me = ws.people.iter().find(|x| x.is_me);
+    let last = live.blocks.len() - 1;
+    div()
+        .flex()
+        .flex_col()
+        .gap(rpx(14.))
+        .children(live.blocks.iter().enumerate().map(|(i, b)| {
+            let (name, color) = match b.track {
+                Track::Mic => (
+                    me.map_or_else(|| "You".to_owned(), |m| m.name.clone()),
+                    me.map_or(p.fg_chip, |m| p.speaker(m.color)),
+                ),
+                Track::Remote => ("Teams".to_owned(), p.fg3),
+            };
+            // The newest line may still grow; it reads lighter, like the prototype.
+            let newest = i == last;
+            div()
+                .flex()
+                .gap(rpx(12.))
+                .child(div().w(px(3.)).flex_none().rounded(px(2.)).bg(color))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(3.))
+                        .child(
+                            div()
+                                .flex()
+                                .items_baseline()
+                                .gap(rpx(8.))
+                                .child(
+                                    div()
+                                        .text_size(ts::SMALL)
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(color)
+                                        .child(name),
+                                )
+                                .child(ui::mono(
+                                    format::clock(b.start_ms / 1000),
+                                    ts::SMALL,
+                                    p.fg4,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .line_height(rpx(22.))
+                                .text_color(if newest { p.fg2 } else { p.fg })
+                                .when(newest, |d| d.font_weight(FontWeight::LIGHT))
+                                .child(b.text.clone()),
+                        ),
+                )
+        }))
+        .into_any_element()
+}
+
 /// The live view of the running session.
 pub fn render(ws: &Workspace, s: &Session, p: &Palette, cx: &mut Context<Workspace>) -> AnyElement {
     let me = ws.people.iter().find(|x| x.is_me);
@@ -152,17 +240,14 @@ pub fn render(ws: &Workspace, s: &Session, p: &Palette, cx: &mut Context<Workspa
         .border_color(p.bd)
         .child(ui::section_label("Recording", p.fg3))
         .child(tracks)
-        .child(ui::section_label("Live captions", p.fg3).mt(rpx(10.)))
         .child(
-            div()
-                .text_size(ts::BODY)
-                .text_color(p.fg3)
-                .line_height(rpx(19.))
-                .child(
-                    "Captions stream here from a small on-device model in M6. The full \
-                     transcript is made after the call (M2).",
-                ),
-        );
+            ui::section_label(
+                "Live captions · small model · replaced after the call",
+                p.fg3,
+            )
+            .mt(rpx(10.)),
+        )
+        .child(captions(ws, s, p, cx));
 
     let bookmarks = div()
         .w_full()

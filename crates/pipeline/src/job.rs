@@ -120,6 +120,7 @@ pub fn transcribe_meeting(
     let mut opts = Options {
         prompt: input.prompt.clone(),
         language: input.language.clone(),
+        fast: false,
     };
     let mut done = 0usize;
     let mut lines = Vec::new();

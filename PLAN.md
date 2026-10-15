@@ -118,9 +118,61 @@ search filters.
 
 Teams auto-detect prompt, Graph calendar, Jira export, Markdown/Word/SRT export.
 
+- [x] Meeting detection: an active Teams capture session (the mic stream Teams holds
+      open for the whole call, muted or not) in the Teams process tree, polled every
+      2 s with hysteresis; the meeting window's title names it. Off Windows,
+      `SWITCHSCRIBE_FAKE_MEETING` fakes a call.
+- [x] Record prompt in the bottom-right corner (Record / Ignore / Always record this
+      title), or record straight away when Settings says so; auto-stop 30 s after the
+      call ends or after N silent minutes; test recordings never stop on their own.
+- [x] Outlook calendar: Microsoft Graph with the user's own Entra app (device code
+      sign-in, refresh, `calendarView` every 10 min) or a published ICS link. A
+      recording takes its event's subject as its title; invitees in the library become
+      attendees, the rest appear as "invited" suggestions on the Name-a-speaker card.
+- [x] Jira Cloud: settings with a sealed API token and a connection test; Send one item,
+      tick several on the Action items screen, or approve the agent's
+      `create_jira_issue`. Issues quote the transcript line, link back with
+      `switchscribe://meeting/<id>?t=<s>`, take the owner as assignee and a parsed due
+      date; the item then shows View KEY.
+- [x] Exports from the meeting's Export menu: Markdown, Word, SRT, VTT and JSON, to a
+      save dialog (or Downloads when the platform has none); the notice offers Show in
+      folder. `export_meeting` over MCP returns the text formats.
+- [x] One app per user: a second launch or a clicked `switchscribe://` link hands over
+      to the running app and opens the moment; Windows registers the scheme per user.
+- [ ] Real-machine check: join a Teams call on Windows and see the prompt within a few
+      seconds, named from the meeting window or calendar; leave and see the recording
+      stop 30 s later; a muted call is still detected.
+- [ ] Real-machine check: Graph sign-in against a work tenant (or the ICS fallback);
+      send two action items to a real Jira Cloud project and click the link in the
+      issue; open each export in Word and a video player (SRT/VTT).
+
 ## M6 Live and polish
 
 Live captions, onboarding, error states, signed installer and auto-update.
+
+- [x] Live captions (Settings → Models, also from the live view mid-call): each track cut
+      at pauses and captioned by Base or Small with greedy decoding; shown in the live
+      view, newest line lighter, and in the mini recorder, which grows on hover.
+- [x] First-run setup: welcome and what stays local, audio with a live meter test, the
+      model for this machine, your name and a headset tip, calendar and Jira, the consent
+      notice; skippable, and Settings → Run setup again.
+- [x] Error states: a missing coding CLI turns the title-bar dot amber with the reason;
+      captions without a model warn and keep recording (mic lost, Teams fallback, missing
+      model and the empty state were already in).
+- [x] Installer: Inno Setup, per user, no admin; Start with Windows (`--background`
+      opens to the tray); `switchscribe://` registered; uninstall keeps the data folder.
+- [x] Release workflow on `v*` tags: release build, optional signing (PFX or Azure
+      Trusted Signing), installer plus `.sha256`, GitHub release.
+- [x] Updates: a check every six hours (Settings → Updates, or off), Update button in the
+      title bar, download with SHA-256 check, silent install and restart.
+- [x] Keep audio: Forever / 7 / 30 / 90 days, enforced for finished meetings at start.
+- [ ] Real-machine check: cut `v0.1.0` (bump the version, tag, push) and install on a
+      fresh Windows machine; setup through to the first recorded meeting without help.
+- [ ] Real-machine check: live captions keep up on a laptop CPU with Base during a real
+      call; the mini recorder grows on hover.
+- [ ] Real-machine check: install `v0.1.1` over it from the Update button; the app
+      restarts on the new version with its data intact; Start with Windows opens to the
+      tray.
 
 ## Follow-ups
 
@@ -131,9 +183,15 @@ Live captions, onboarding, error states, signed installer and auto-update.
 - Windows icon resource (switchhead's `build.rs`) once there is an icon.
 - Global hotkeys (Ctrl+Shift+R / Ctrl+Shift+B work only while a switchscribe window
   has focus); `global-hotkey` would make them system-wide.
-- Mini recorder: snap to screen edges, and expand on hover with the title and a live
-  caption line (with M6 captions).
-- Settings: a test recording with playback (onboarding, M6).
+- Mini recorder: snap to screen edges.
+- Settings: a test recording with playback (onboarding has a meter test only).
+- Verify the update installer's Authenticode signature before running it
+  (`WinVerifyTrust`, signer matching the running exe) and refuse unsigned updates once
+  releases are signed; sign the embedded uninstaller (Inno `SignTool=`).
+- Decide whether a GPU (Vulkan) build ships alongside the CPU one.
+- Live captions: a vocabulary prompt (glossary, attendees) and showing who on the Teams
+  track speaks (live diarization).
+- A "Delete everything" button in Settings (Storage & privacy).
 - Echo bleed: match mic segments against the loopback track (M3 leaves the user's
   own voice out of the Teams-track library, which hides most of it).
 - Re-identify speakers in meetings transcribed before the speaker models were
@@ -148,8 +206,13 @@ Live captions, onboarding, error states, signed installer and auto-update.
   it on Windows; a job object would take the whole tree.
 - `--demo` in the Ask panel runs a second, separate demo store, so changes the agent
   proposes there never reach the app's cards (the demo seeds one card instead).
-- `export_meeting` over MCP and real Jira issues for `create_jira_issue` (M5; approving
-  one today says Jira is not connected).
+- Jira Server / Data Center (personal access tokens, REST v2) if anyone needs it; M5
+  speaks Jira Cloud only.
+- Expand `RRULE` in ICS feeds (a recurring series shows only its first instance today;
+  Graph is unaffected).
+- Detection for Teams in a browser and for Zoom (after v1, with PipeWire capture).
+- Pending `create_jira_issue` proposals from the user's own CLI session (`switchscribe
+  mcp --ask` in a terminal) show only when the Ask panel next loads its cards.
 - Summaries for long meetings: the whole transcript goes in one prompt; split past the
   CLI's context if three-hour calls show up.
 - Large meetings: the player holds 24 kHz 16-bit audio in memory (about 170 MB an

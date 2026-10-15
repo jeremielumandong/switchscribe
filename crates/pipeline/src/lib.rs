@@ -6,6 +6,7 @@
 
 pub mod identify;
 pub mod job;
+pub mod live;
 pub mod models;
 #[cfg(feature = "sherpa")]
 pub mod sherpa;
@@ -19,6 +20,10 @@ use switchscribe_store::NewSegment;
 
 pub use job::{JobInput, TranscriptFile, transcribe_meeting};
 pub use vad::{EnergyVad, Vad};
+
+/// Whether this build runs Whisper on a GPU (the `vulkan` or `cuda` feature). Release
+/// builds are CPU-only, so they should not recommend the large models.
+pub const GPU_BUILD: bool = cfg!(any(feature = "vulkan", feature = "cuda"));
 
 /// Sample rate the speech models take.
 pub const RATE: u32 = 16_000;
@@ -74,6 +79,8 @@ pub struct Options {
     pub prompt: String,
     /// Language code (`en`), or `None` to detect it.
     pub language: Option<String>,
+    /// Favor speed over accuracy (greedy decoding), for live captions.
+    pub fast: bool,
 }
 
 /// An engine's output for one piece of audio.

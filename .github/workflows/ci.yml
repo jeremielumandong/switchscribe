@@ -32,6 +32,13 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      # The cache keeps target/ but not sherpa-onnx's downloaded libraries, so a restored
+      # build looks finished and then fails to link. Make its build script fetch them again.
+      - name: Refetch sherpa-onnx libraries
+        shell: bash
+        run: |
+          rm -rf target/sherpa-onnx-prebuilt
+          cargo clean -p sherpa-onnx-sys
       - name: Linux system packages for GPUI and audio output
         if: runner.os == 'Linux'
         run: |

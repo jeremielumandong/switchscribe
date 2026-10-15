@@ -53,6 +53,8 @@ pub struct Speakers {
     pub clip_end: Option<u64>,
     /// A clip to play once the meeting's audio has loaded.
     pending_clip: Option<(String, i64, i64)>,
+    /// Calendar invitees of the selected meeting who are not in the library yet.
+    pub invitees: Vec<String>,
 }
 
 impl Speakers {
@@ -75,6 +77,7 @@ impl Speakers {
             busy: false,
             clip_end: None,
             pending_clip: None,
+            invitees: Vec::new(),
         }
     }
 }
@@ -342,18 +345,33 @@ impl Workspace {
         if self.speakers.file.as_ref().is_some_and(|(f, _)| *f == id) {
             return;
         }
-        if self.demo {
-            self.speakers.file = (id == demo::FEATURED).then(|| (id, demo::speakers()));
-            return;
+        let demo = self.demo;
+        if demo {
+            self.speakers.file = (id == demo::FEATURED).then(|| (id.clone(), demo::speakers()));
         }
         let dir = self.meeting_dir(&id);
-        let task = cx
-            .background_executor()
-            .spawn(async move { SpeakersFile::load(&dir) });
+        let store = self.store.clone();
+        let meeting = id.clone();
+        let task = cx.background_executor().spawn(async move {
+            let invitees = store
+                .lock()
+                .ok()
+                .and_then(|s| {
+                    let json = s.meeting_calendar(&meeting).ok()??;
+                    let people = s.people().ok()?;
+                    Some(crate::integrations_view::new_invitees(Some(&json), &people))
+                })
+                .unwrap_or_default();
+            let file = if demo { None } else { SpeakersFile::load(&dir) };
+            (file, invitees)
+        });
         cx.spawn(async move |this, cx| {
-            let file = task.await;
+            let (file, invitees) = task.await;
             let _ = this.update(cx, |ws, cx| {
-                ws.speakers.file = file.map(|f| (id, f));
+                if !demo {
+                    ws.speakers.file = file.map(|f| (id, f));
+                }
+                ws.speakers.invitees = invitees;
                 cx.notify();
             });
         })
@@ -438,6 +456,17 @@ impl Workspace {
                 Who::Name(typed)
             }
         };
+        self.name_as(who, window, cx);
+    }
+
+    /// Name the speaker as a calendar invitee (a new person in the library).
+    fn name_invitee(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.speakers.busy {
+            self.name_as(Who::Name(name), window, cx);
+        }
+    }
+
+    fn name_as(&mut self, who: Who, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(m), Some(cluster)) = (self.selected(), self.naming_cluster().cloned()) else {
             return;
         };
@@ -648,22 +677,6 @@ fn merge_voiceprints(
 }
 
 /// A checkbox: a 14 px box, ticked when `on`.
-fn checkbox(on: bool, p: &Palette) -> gpui_kit::Div {
-    div()
-        .size(rpx(14.))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(3.))
-        .border_1()
-        .border_color(if on { p.fg } else { p.fg4 })
-        .when(on, |d| d.bg(p.fg))
-        .text_size(ts::TINY)
-        .text_color(p.on_light)
-        .when(on, |d| d.child("✓"))
-}
-
 /// The Name-a-speaker card: clips to listen to, voice-matched suggestions, a name field.
 pub fn name_card(
     ws: &Workspace,
@@ -804,6 +817,38 @@ pub fn name_card(
                     .child(ui::mono(detail, ts::SMALL, detail_color)),
             )
         });
+    let invitees = ws
+        .speakers
+        .invitees
+        .iter()
+        .take(4)
+        .enumerate()
+        .map(|(i, name)| {
+            let name = name.clone();
+            div()
+                .id(("invitee", i))
+                .flex()
+                .items_center()
+                .gap(rpx(8.))
+                .px(rpx(10.))
+                .py(rpx(5.))
+                .rounded(px(6.))
+                .border_1()
+                .border_dashed()
+                .border_color(p.fg4)
+                .cursor_pointer()
+                .hover(|s| s.bg(p.chip))
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(p.fg)
+                        .child(format!("{name}?")),
+                )
+                .child(ui::mono("invited", ts::SMALL, p.fg3))
+                .on_click(
+                    cx.listener(move |ws, _, window, cx| ws.name_invitee(name.clone(), window, cx)),
+                )
+        });
     let remember = ws.speakers.remember;
     let relabeling = ws.speakers.relabel.is_some();
     div()
@@ -865,6 +910,7 @@ pub fn name_card(
                 .items_center()
                 .gap(rpx(8.))
                 .children(chips)
+                .children(invitees)
                 .child(
                     div()
                         .w(rpx(170.))
@@ -879,7 +925,7 @@ pub fn name_card(
                         .text_color(p.fg_ctl)
                         .cursor_pointer()
                         .on_click(cx.listener(|ws, _, _, cx| ws.toggle_remember(cx)))
-                        .child(checkbox(remember, p))
+                        .child(ui::checkbox(remember, p))
                         .child("Remember this voice"),
                 )
                 .child(div().flex_1())

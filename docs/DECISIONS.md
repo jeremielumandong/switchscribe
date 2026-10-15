@@ -189,3 +189,167 @@ Non-obvious calls, newest last. Append when you make one.
   `switchscribe_agent::process::command`, and `clippy.toml` disallows
   `std::process::Command::new` so a direct spawn fails CI. Async runners (M4) wrap the
   same `Command` (`tokio::process::Command::from`) rather than building their own.
+
+## M5 integrations (library)
+
+- **Graph sign-in is the OAuth device code flow.** switchscribe is a public client: it
+  cannot keep a client secret, and a localhost redirect listener is fragile on locked-down
+  work laptops (firewall prompts, blocked ports). With device code the app shows a short
+  code, the user signs in at `microsoft.com/devicelogin` in any browser (MFA and
+  conditional access included), and the app polls the token endpoint every `interval`
+  seconds (`slow_down` adds 5). Scopes: `offline_access Calendars.Read User.Read`.
+- **The client id is the user's own app registration.** We ship no multi-tenant app id:
+  most tenants need admin consent for a third-party app, while a user (or their IT) can
+  register a single-tenant public client ("Allow public client flows" on, delegated
+  `Calendars.Read` + `User.Read`) and paste its id into Settings. Tenant defaults to
+  `organizations`. Tokens are sealed in the store's `secrets` table (DPAPI on Windows),
+  never in `settings.json`; only the client id, tenant and account name are settings.
+- **ICS is the fallback** (risk table: Graph needs admin consent). An Outlook "Publish
+  calendar" link (`webcal://` mapped to `https://`) is fetched and parsed by a small
+  hand-written parser: unfolding, text unescaping, `CN=` / `mailto:` attendees (rooms and
+  resources dropped), `X-MICROSOFT-SKYPETEAMSMEETINGURL` or a `teams.microsoft.com` link
+  marks a Teams meeting. `TZID` times are read as the machine's local time (Outlook writes
+  Windows zone names; mapping them is not worth it for one's own calendar). **`RRULE` is
+  not expanded:** a recurring series appears once, at its first instance (moved instances
+  with `RECURRENCE-ID` appear on their own). Graph's `calendarView` expands recurrences,
+  so this only limits the fallback.
+- **Matching a meeting to an event:** in progress at the recording's start, or starting
+  within 10 minutes after it; Teams meetings win, then the closest start. All-day and
+  cancelled events are ignored.
+- **Jira descriptions are ADF** (REST v3 requires Atlassian Document Format): the item
+  text, Owner, Due as said (plus the parsed date), "From <meeting> on <date> at mm:ss",
+  the transcript line as a blockquote, and the link back as a paragraph whose text is
+  the URL itself, so it stays readable if Jira strips a non-http link mark. Empty parts
+  are omitted (ADF rejects empty text nodes). When Jira refuses only `duedate` or
+  `assignee` (not on the create screen, or an unassignable user) the issue is created
+  again without them. Assignees are set only for an unambiguous user search (one active
+  human match, or one exact display-name match).
+- **Due dates** are parsed against the meeting's local day: weekday names (and "next" /
+  "this" weekday) mean the next such day strictly after the meeting; "today"/"EOD",
+  "tomorrow"; "end of week" is that week's Friday; "Oct 22" / "22nd of October" (rolled
+  into next year when already past, unless a year is given); ISO dates. Anything else
+  ("next sprint", "soon") sets no `duedate` and stays as text in the description.
+- **.docx is written by hand:** five parts (`[Content_Types].xml`, `_rels/.rels`,
+  `word/document.xml`, its rels and a small `styles.xml` with Title / Heading 1 / List
+  Paragraph) zipped with the `zip` crate. The content is headings and paragraphs, so a
+  generator crate would add weight for nothing; all text is XML-escaped and characters
+  XML 1.0 cannot hold are dropped.
+- **The JSON export is versioned** (`"format": "switchscribe.meeting/1"`); fields are only
+  added. Times are `*_ms` from the meeting start plus `at` as `mm:ss`.
+
+## M5 detection and integrations (app)
+
+- **A call is a Teams capture session.** New Teams opens a mic stream when a call starts
+  and keeps it open while muted, so an active WASAPI *capture* session owned by a
+  process in the Teams tree (`ms-teams.exe` and its WebView2 children) is the call.
+  Render sessions were rejected: Teams plays notification sounds outside calls. Window
+  titles (`EnumWindows`) only name it: "<meeting> | Microsoft Teams", with Teams' own
+  views (Chat, Calendar, ...) ignored.
+- **Hysteresis:** a call counts after two polls (2 s apart) and ends after four missing
+  polls, so a headset switch does not split a meeting.
+- **Auto-stop** fires 30 s after the call ends, or when the Teams track has been under
+  2% level for the set minutes (default 3, Never possible). Recordings started from
+  Settings' test button never stop on their own. The reason shows in the notice strip.
+- **"Always record" is per title,** matched exactly (case-insensitive); a title is the
+  calendar subject when one matches, else the window's meeting name.
+- **Single instance over loopback TCP,** not a named pipe or mutex: one portable piece of
+  code, and the same channel carries `switchscribe://` links. `instance.port` holds the
+  port and a random key; requests without the key are dropped. The scheme is registered
+  per user under `HKCU\Software\Classes` with `reg.exe` (through `process::command`, no
+  window) at each start, so moving the exe keeps links working.
+- **Notices are one strip above the content,** replaced by the next one: export results
+  (with Show in folder), Jira results (with View issue) and setup hints. Warnings are
+  amber; nothing here is red.
+- **The calendar refreshes every 10 minutes** on the background executor (and when its
+  settings change). Invitees in the library become the meeting's attendees; the rest are
+  offered on the Name-a-speaker card as dashed "invited" chips, and naming a speaker with
+  one adds them like a typed name.
+- **Exports go through the platform save dialog;** where there is none (Linux without an
+  XDG portal) they land in Downloads, else `<data>/exports`.
+- **`export_meeting` over MCP** returns Markdown, SRT, VTT or JSON as text (Word is
+  binary) and leaves out the user's notes, which live in the meeting folder the server
+  does not read. This is the one reason `agent` depends on `integrations`.
+- **Approved `create_jira_issue` proposals are created by the app,** which holds the Jira
+  token; `mcp::apply_pending` refuses them.
+
+## M6 release and updates
+
+- **Inno Setup, per user.** `installer/switchscribe.iss` installs into
+  `%LOCALAPPDATA%\Programs\switchscribe` with `PrivilegesRequired=lowest`: no admin rights
+  and no UAC prompt, which matters on locked-down work laptops and lets the in-app updater
+  run the next installer silently. MSIX was rejected: its container virtualizes
+  `%APPDATA%` and the registry (the data folder, the `HKCU` URL scheme and Run entry), it
+  needs a signed package even to sideload, and process loopback capture plus spawning the
+  user's coding CLI from inside the package is untested ground. WiX/MSI was rejected as
+  heavier to author for no gain here: per-user MSIs are awkward, and we need no Group
+  Policy deployment.
+- **One stable `AppId`** (`131DB58A-...`) ties upgrades and the uninstaller together; it
+  never changes.
+- **Silent updates:** the app downloads `switchscribe-setup-<version>-x64.exe`, runs it
+  with `update::INSTALLER_ARGS` (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+  /CLOSEAPPLICATIONS`) and quits; `CloseApplications=yes` closes anything still holding
+  the files, and a silent install starts the new version again (`[Run]` with
+  `Check: WizardSilent`).
+- **Signing is optional in CI.** A PFX (`WINDOWS_CERT_PFX`) or Azure Trusted Signing signs
+  the exe and then the installer, with RFC 3161 timestamps. Without either, the workflow
+  still publishes an unsigned build with a warning annotation, so releases are never
+  blocked on a certificate; SmartScreen will warn those users. The embedded uninstaller is
+  not signed yet (Inno's `SignTool=` setting would do it; follow-up).
+- **The `.sha256` sidecar is an integrity check, not a trust anchor.** It comes from the
+  same release as the installer, so it catches truncated or corrupted downloads (and a
+  wrong asset), but anyone who can replace the installer on the release can replace its
+  hash too. The real trust anchor is the Authenticode signature on the installer.
+  Follow-up: verify it before running the update (`WinVerifyTrust`, and check the signer
+  matches the running exe's signer), and refuse unsigned updates once releases are
+  signed. `update::download` already refuses a release without a hash.
+- **Update checks use the GitHub API's `releases/latest`,** which skips drafts and
+  prereleases; `update::pick` also skips them and any tag that is not a plain
+  `vX.Y.Z`, and compares versions with semver precedence (no `semver` crate for one
+  comparison). The unauthenticated API allows 60 requests an hour per IP; a 403/429 is
+  reported as "try again later", so check at most a few times a day.
+- **The tag must match `[workspace.package] version`,** checked by the workflow, so the
+  running build's `CARGO_PKG_VERSION` is what the update check compares against.
+- **Uninstall keeps the data folder.** `%APPDATA%\switchscribe` (recordings, transcripts,
+  voiceprints, models, settings) is never deleted by the uninstaller; reinstalling must
+  not lose meetings. Only the program files, the shortcut, the `switchscribe://` key and
+  the Run value go.
+
+## M6 live captions and polish (app)
+
+- **Captions tap the recorder, not the files.** `Recorder::tap` copies each block a track
+  writes (after resampling, without the silence padding) to one channel; padding shows up
+  as a jump in `start`, which the captioner treats as a pause. Captions never touch the
+  Opus files or slow the capture threads (the channel is unbounded and drained
+  continuously).
+- **Pieces are cut at pauses:** at least 2 s, ended by 0.5 s under 1% RMS, or forced at
+  8 s; silent pieces are skipped. One thread captions both tracks with greedy decoding
+  (`Options::fast`). If it falls behind, pieces beyond two waiting are dropped, oldest
+  first: captions should be current, and the post-call pass is the real transcript.
+- **Which model:** Base, else Small; a large model only when nothing smaller is installed
+  and the GPU is on. Without one, recording goes on and an amber banner offers the
+  download. Captions are not saved; the post-call transcript replaces them.
+- **Live speakers are tracks, not people:** the mic is you (your name and color), the
+  Teams track reads "Teams" in neutral gray; diarization only runs after the call.
+- **The mini recorder grows downward on hover** (title and latest line under the
+  controls), unlike the prototype's upward growth, so the buttons stay under the pointer
+  while the window resizes.
+- **`GPU_BUILD`:** release builds are CPU-only, so model recommendations (onboarding and
+  Settings) ignore the GPU switch unless the build has the `vulkan` or `cuda` feature;
+  CPU builds recommend Small.
+- **Onboarding reuses Settings' controls** (audio, models, integrations) and opens until
+  finished or skipped once (`onboarded` in settings.json; Settings → Run setup again).
+  The audio test records both tracks into `<data>/setup-test` for the meters and deletes
+  it. There is no separate 20-second voice enrollment: the mic track is the user by
+  definition, and M3 already keeps the user's voiceprint current from each meeting's mic
+  track, so the step asks for the user's name and recommends a headset.
+- **`--background`** (the installer's "Start with Windows") opens the window hidden on
+  Windows; the tray or another launch shows it (a hidden GPUI window shows on activate).
+  A background launch hands a `background` request to a running app, which ignores it.
+- **Audio retention defaults to Forever.** Settings showed "Keep audio: 30 days" before
+  anything enforced it; deleting recordings is now real, so it is the user's choice
+  (Forever / 7 / 30 / 90 days). It prunes only `Ready` meetings (a meeting waiting for
+  speaker names still needs clips) at start, off the UI thread.
+- **Missing CLI is amber** in the title bar (the dot), with the reason in the tooltip.
+- **Update checks** start a minute after launch and repeat every six hours, never in the
+  demo; failures are only shown when the user pressed Check now. Installing refuses while
+  recording.

@@ -3,9 +3,10 @@
 //!
 //! [`Recorder`] runs a recording; [`Backend::system`] opens the real devices on Windows and
 //! [`Backend::fake`] two synthetic voices anywhere else (tests, `SWITCHSCRIBE_FAKE_AUDIO`).
-//! Meeting detection arrives in M5.
+//! [`detect`] watches for Teams calls.
 
 pub mod audio;
+pub mod detect;
 pub mod ogg_opus;
 mod playback;
 mod recorder;
@@ -19,7 +20,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub use playback::{Player, envelope};
-pub use recorder::{Backend, CAPTURE_FILE, Monitor, Notice, Recorder, Recording, TrackReport};
+pub use recorder::{
+    Backend, CAPTURE_FILE, Monitor, Notice, Recorder, Recording, Tapped, TrackReport,
+};
 pub use source::{FakeSource, FakeVoice, OpenFn, Opened, Source};
 
 /// The two tracks every recording has. Keeping them apart is what makes "who is

@@ -52,9 +52,13 @@ fn is_noise(text: &str) -> bool {
 impl SpeechEngine for WhisperEngine {
     fn transcribe(&self, audio: &[f32], opts: &Options) -> Result<Transcribed> {
         let mut state = self.ctx.create_state().map_err(engine_err)?;
-        let mut params = FullParams::new(SamplingStrategy::BeamSearch {
-            beam_size: 5,
-            patience: -1.0,
+        let mut params = FullParams::new(if opts.fast {
+            SamplingStrategy::Greedy { best_of: 1 }
+        } else {
+            SamplingStrategy::BeamSearch {
+                beam_size: 5,
+                patience: -1.0,
+            }
         });
         params.set_n_threads(threads());
         params.set_language(Some(opts.language.as_deref().unwrap_or("auto")));

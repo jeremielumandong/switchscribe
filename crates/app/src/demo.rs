@@ -4,6 +4,7 @@
 //! the user's data folder.
 
 use chrono::{Days, Local, NaiveDate, NaiveTime, TimeZone as _};
+use switchscribe_integrations::calendar;
 use switchscribe_pipeline::identify::{Cluster, SpeakersFile};
 use switchscribe_store::{
     Bullet, MeetingStatus, NewActionItem, NewMeeting, NewSegment, Store, StoredVoiceprint, Summary,
@@ -210,6 +211,11 @@ fn at(today: NaiveDate, days_ago: u64, (h, m): (u32, u32)) -> i64 {
 }
 
 /// An in-memory store holding the demo meetings, dated relative to `today`.
+/// Lines the demo's live captions read back.
+pub fn caption_lines() -> Vec<&'static str> {
+    SEGMENTS.iter().map(|s| s.2).collect()
+}
+
 pub fn store(today: NaiveDate) -> switchscribe_store::Result<Store> {
     let mut store = Store::open_in_memory()?;
     let mut ids = Vec::new();
@@ -249,6 +255,25 @@ pub fn store(today: NaiveDate) -> switchscribe_store::Result<Store> {
     store.add_segments(FEATURED, &segments)?;
     let (sum, items) = summary(&ids);
     store.set_summary(FEATURED, &sum, &items)?;
+    // Its calendar invite: Lena is invited but not in the library, so naming Speaker 3
+    // offers her.
+    let invite = calendar::CalendarEvent {
+        subject: "AKS migration planning".into(),
+        start: at(today, 0, (10, 0)),
+        end: at(today, 0, (10, 0)) + 3600,
+        attendees: ["Jeremie", "Priya Nair", "Marcus Chen", "Lena Park"]
+            .iter()
+            .map(|n| calendar::Attendee {
+                name: (*n).into(),
+                email: None,
+            })
+            .collect(),
+        organizer: Some("Jeremie".into()),
+        online_meeting: true,
+    };
+    if let Ok(json) = serde_json::to_string(&invite) {
+        store.set_meeting_calendar(FEATURED, Some(&json))?;
+    }
     // A finished item from an earlier meeting, for the Action items screen.
     store.set_summary(
         "standup",

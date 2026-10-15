@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -129,6 +130,19 @@ struct Shared {
     /// Meter levels as `f32` bits, indexed like [`Track::ALL`].
     levels: [AtomicU32; 2],
     notices: Mutex<Vec<Notice>>,
+    /// Where written audio is copied for live captions, once someone asks.
+    tap: Mutex<Option<Sender<Tapped>>>,
+}
+
+/// Audio a track just wrote, for live captions: 48 kHz mono.
+#[derive(Clone, Debug)]
+pub struct Tapped {
+    /// The track.
+    pub track: Track,
+    /// Where it starts in the track, in samples at 48 kHz.
+    pub start: u64,
+    /// The samples.
+    pub samples: Vec<f32>,
 }
 
 impl Shared {
@@ -211,6 +225,7 @@ impl Recorder {
             }),
             levels: [AtomicU32::new(0), AtomicU32::new(0)],
             notices: Mutex::new(Vec::new()),
+            tap: Mutex::new(None),
         });
         let mut threads = Vec::new();
         for (track, open) in [(Track::Mic, backend.mic), (Track::Remote, backend.remote)] {
@@ -234,6 +249,18 @@ impl Recorder {
     /// A handle for polling levels, time and notices from another thread.
     pub fn monitor(&self) -> Monitor {
         Monitor(self.shared.clone())
+    }
+
+    /// A copy of the audio both tracks write from now on (silence padding left out),
+    /// for live captions. A later call replaces the earlier receiver.
+    pub fn tap(&self) -> Receiver<Tapped> {
+        let (tx, rx) = mpsc::channel();
+        *self
+            .shared
+            .tap
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(tx);
+        rx
     }
 
     /// The meeting folder being recorded into.
@@ -366,7 +393,20 @@ fn run_track(track: Track, open: OpenFn, path: &Path, shared: &Shared) -> TrackR
                     };
                     r.process(&mono, &mut buf);
                 }
+                let start = writer.samples();
                 writer.push(&buf)?;
+                let mut tap = shared.tap.lock().unwrap_or_else(PoisonError::into_inner);
+                if let Some(tx) = tap.as_ref() {
+                    let sent = tx.send(Tapped {
+                        track,
+                        start,
+                        samples: buf.clone(),
+                    });
+                    if sent.is_err() {
+                        // Nobody listens any more.
+                        *tap = None;
+                    }
+                }
             } else if last_audio.elapsed() > METER_HOLD {
                 shared.set_level(track, 0.0);
             }
@@ -400,6 +440,24 @@ mod tests {
 
     fn wait(ms: u64) {
         std::thread::sleep(Duration::from_millis(ms));
+    }
+
+    #[test]
+    fn the_tap_copies_what_each_track_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let rec = Recorder::start(dir.path(), Backend::fake()).unwrap();
+        let tap = rec.tap();
+        wait(500);
+        drop(rec.stop().unwrap());
+        let got: Vec<Tapped> = tap.try_iter().collect();
+        for track in Track::ALL {
+            let blocks: Vec<&Tapped> = got.iter().filter(|t| t.track == track).collect();
+            assert!(!blocks.is_empty(), "{track:?}");
+            // Blocks follow each other in the track (padding may sit between them).
+            for w in blocks.windows(2) {
+                assert!(w[1].start >= w[0].start + w[0].samples.len() as u64);
+            }
+        }
     }
 
     #[test]

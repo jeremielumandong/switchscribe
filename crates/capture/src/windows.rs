@@ -251,3 +251,124 @@ impl Drop for WasapiSource {
         }
     }
 }
+
+/// Teams' processes and their descendants (WebView2, the media host), by pid.
+fn teams_tree() -> std::collections::HashSet<u32> {
+    let system = System::new_with_specifics(
+        RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing()),
+    );
+    let processes = system.processes();
+    let is_teams = |name: &OsStr| {
+        let name = name.to_string_lossy().to_ascii_lowercase();
+        TEAMS_EXES.contains(&name.as_str())
+    };
+    let mut tree: std::collections::HashSet<u32> = processes
+        .values()
+        .filter(|p| is_teams(p.name()))
+        .map(|p| p.pid().as_u32())
+        .collect();
+    // Grow the set to a fixed point: children of anything in it.
+    loop {
+        let before = tree.len();
+        for p in processes.values() {
+            if p.parent()
+                .is_some_and(|parent| tree.contains(&parent.as_u32()))
+            {
+                tree.insert(p.pid().as_u32());
+            }
+        }
+        if tree.len() == before {
+            return tree;
+        }
+    }
+}
+
+/// The pid of an active capture session owned by Teams' tree, if any.
+fn teams_capture_session(tree: &std::collections::HashSet<u32>) -> Result<Option<u32>> {
+    let enumerator = DeviceEnumerator::new()?;
+    for device in &enumerator.get_device_collection(&Direction::Capture)? {
+        let Ok(device) = device else { continue };
+        let Ok(sessions) = device
+            .get_iaudiosessionmanager()
+            .and_then(|m| m.get_audiosessionenumerator())
+        else {
+            continue;
+        };
+        for i in 0..sessions.get_count().unwrap_or(0) {
+            let Ok(session) = sessions.get_session(i) else {
+                continue;
+            };
+            let active = matches!(session.get_state(), Ok(wasapi::SessionState::Active));
+            if let (true, Ok(pid)) = (active, session.get_process_id())
+                && tree.contains(&pid)
+            {
+                return Ok(Some(pid));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Teams' audio sessions: a call is Teams holding the microphone.
+pub(crate) struct SessionProbe;
+
+impl crate::detect::Probe for SessionProbe {
+    fn probe(&mut self) -> Option<crate::detect::TeamsCall> {
+        com_init();
+        let tree = teams_tree();
+        if tree.is_empty() {
+            return None;
+        }
+        let pid = match teams_capture_session(&tree) {
+            Ok(pid) => pid?,
+            Err(e) => {
+                tracing::debug!(error = %e, "could not read audio sessions");
+                return None;
+            }
+        };
+        let title = window_titles::visible()
+            .into_iter()
+            .filter(|(owner, _)| tree.contains(owner))
+            .find_map(|(_, title)| crate::detect::meeting_title(&title));
+        Some(crate::detect::TeamsCall { pid, title })
+    }
+}
+
+/// Top-level window titles, through `EnumWindows`.
+#[allow(unsafe_code)]
+mod window_titles {
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    };
+    use windows::core::BOOL;
+
+    /// (owning pid, title) of every visible top-level window with a title.
+    pub(super) fn visible() -> Vec<(u32, String)> {
+        let mut out: Vec<(u32, String)> = Vec::new();
+        // SAFETY: the callback only runs during this call, and `out` outlives it.
+        let listed = unsafe { EnumWindows(Some(collect), LPARAM(&raw mut out as isize)) };
+        if let Err(e) = listed {
+            tracing::debug!(error = %e, "could not list windows");
+        }
+        out
+    }
+
+    unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        // SAFETY: `lparam` is the `Vec` passed by `visible`, borrowed for this call.
+        let out = unsafe { &mut *(lparam.0 as *mut Vec<(u32, String)>) };
+        // SAFETY: plain queries on a window handle EnumWindows gave us.
+        unsafe {
+            if IsWindowVisible(hwnd).as_bool() {
+                let mut buf = [0u16; 512];
+                let n = GetWindowTextW(hwnd, &mut buf);
+                if n > 0 {
+                    let mut pid = 0u32;
+                    GetWindowThreadProcessId(hwnd, Some(&raw mut pid));
+                    out.push((pid, String::from_utf16_lossy(&buf[..n as usize])));
+                }
+            }
+        }
+        BOOL(1)
+    }
+}

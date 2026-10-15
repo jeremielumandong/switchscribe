@@ -10,11 +10,16 @@ mod agent_view;
 mod appearance;
 mod ask_panel;
 mod assets;
+mod captions;
 mod demo;
+mod detection;
 mod format;
+mod instance;
+mod integrations_view;
 mod live_view;
 mod meeting_view;
 mod mini_recorder;
+mod onboarding;
 mod player_bar;
 mod processing;
 mod recording;
@@ -23,6 +28,7 @@ mod theme;
 #[cfg(windows)]
 mod tray;
 mod ui;
+mod updates;
 mod workspace;
 
 use std::borrow::Cow;
@@ -57,7 +63,7 @@ fn load_fonts(cx: &mut App) {
 /// Read everything the first frame needs: settings, and the meetings in the index (or the
 /// demo data). A database that will not open leaves the app running on an empty
 /// in-memory index, with a warning in the window.
-fn startup(demo: bool) -> Result<Startup> {
+fn startup(demo: bool, request: instance::Request) -> Result<Startup> {
     let paths = Paths::resolve().context("could not determine a home directory")?;
     let settings = Settings::load(&paths.settings_file());
     let today = chrono::Local::now().date_naive();
@@ -83,6 +89,15 @@ fn startup(demo: bool) -> Result<Startup> {
     if !demo {
         speakers::ensure_me(&store)?;
     }
+    let listener = if demo {
+        None
+    } else {
+        instance::Listener::start(&paths.data)
+    };
+    #[cfg(windows)]
+    if !demo {
+        std::thread::spawn(instance::register_scheme);
+    }
     let meetings = store.meetings()?;
     let people = store.people()?;
     let voiceprints = store.voiceprints()?;
@@ -107,6 +122,8 @@ fn startup(demo: bool) -> Result<Startup> {
         installed_models,
         voiceprints,
         people_stats,
+        listener,
+        request,
     })
 }
 
@@ -151,7 +168,19 @@ fn main() -> Result<()> {
         )
         .init();
     let started = std::time::Instant::now();
-    let state = startup(demo::requested(&args))?;
+    let demo = demo::requested(&args);
+    let request = instance::Request::from_args(&args);
+    if !demo
+        && let Some(paths) = Paths::resolve()
+        && instance::forward(&paths.data, &request)
+    {
+        tracing::info!(?request, "handed over to the running switchscribe");
+        return Ok(());
+    }
+    // Started with Windows: open hidden, in the tray (the tray and a later launch show
+    // the window). Elsewhere there is no tray, so the window shows anyway.
+    let background = cfg!(windows) && request == instance::Request::Background;
+    let state = startup(demo, request)?;
     let zoom = appearance::zoom();
 
     gpui_kit::application()
@@ -171,6 +200,8 @@ fn main() -> Result<()> {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(960.), px(600.))),
                 app_id: Some("switchscribe".into()),
+                show: !background,
+                focus: !background,
                 ..TitleBar::window_options()
             };
             let opened = gpui_kit::open_window(options, cx, |window, cx| {
@@ -182,7 +213,9 @@ fn main() -> Result<()> {
                 return;
             }
             tracing::debug!(ms = started.elapsed().as_millis() as u64, "window opened");
-            cx.activate(true);
+            if !background {
+                cx.activate(true);
+            }
         });
     Ok(())
 }

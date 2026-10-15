@@ -26,6 +26,15 @@ pub struct Settings {
     pub storage: StorageSettings,
     /// Window layout remembered between runs.
     pub layout: LayoutSettings,
+    /// Calendar and Jira (tokens are not here: they are sealed in the store's secrets).
+    #[serde(default)]
+    pub integrations: IntegrationSettings,
+    /// First-run setup was finished or skipped.
+    #[serde(default)]
+    pub onboarded: bool,
+    /// Do not check GitHub for newer versions.
+    #[serde(default)]
+    pub skip_update_check: bool,
 }
 
 /// What the Teams track captures.
@@ -59,6 +68,8 @@ pub struct DetectionSettings {
     pub auto_record: bool,
     /// Stop after the Teams session has been silent this long.
     pub auto_stop_minutes: u32,
+    /// Meeting titles to record without asking ("Always record this meeting").
+    pub always_record: Vec<String>,
 }
 
 impl Default for DetectionSettings {
@@ -67,6 +78,45 @@ impl Default for DetectionSettings {
             auto_detect: true,
             auto_record: false,
             auto_stop_minutes: 3,
+            always_record: Vec::new(),
+        }
+    }
+}
+
+/// Settings → Integrations. Secrets (OAuth tokens, the Jira API token) are kept sealed
+/// in the store, never in this file.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IntegrationSettings {
+    /// The user's own Entra ID app registration (public client) for Microsoft Graph.
+    pub graph_client_id: Option<String>,
+    /// The Entra tenant to sign in to ("organizations", "common" or a tenant id).
+    pub graph_tenant: String,
+    /// The signed-in Graph account, as shown in Settings.
+    pub graph_account: Option<String>,
+    /// A published calendar (ICS) URL, the fallback when Graph is not allowed.
+    pub ics_url: Option<String>,
+    /// Jira Cloud site, `https://example.atlassian.net`.
+    pub jira_site: Option<String>,
+    /// The Atlassian account email the API token belongs to.
+    pub jira_email: Option<String>,
+    /// Project key issues are created in ("OPS").
+    pub jira_project: Option<String>,
+    /// Issue type name for new issues.
+    pub jira_issue_type: String,
+}
+
+impl Default for IntegrationSettings {
+    fn default() -> Self {
+        Self {
+            graph_client_id: None,
+            graph_tenant: "organizations".to_owned(),
+            graph_account: None,
+            ics_url: None,
+            jira_site: None,
+            jira_email: None,
+            jira_project: None,
+            jira_issue_type: "Task".to_owned(),
         }
     }
 }
@@ -165,7 +215,7 @@ impl Default for AgentSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StorageSettings {
-    /// Delete meeting audio after this many days; `None` keeps it.
+    /// Delete the audio of finished meetings after this many days; `None` keeps it.
     pub keep_audio_days: Option<u32>,
     /// The notice to paste into a meeting's chat before recording.
     pub consent_notice: String,
@@ -174,7 +224,8 @@ pub struct StorageSettings {
 impl Default for StorageSettings {
     fn default() -> Self {
         Self {
-            keep_audio_days: Some(30),
+            // Deleting recordings is the user's call, never a default.
+            keep_audio_days: None,
             consent_notice: "Heads up: I'm recording this meeting locally with switchscribe \
                              to take notes. Let me know if you'd rather I didn't."
                 .to_owned(),
@@ -266,6 +317,24 @@ mod tests {
         let s = Settings::load(&path);
         assert_eq!(s.agent.cli, CliKind::GeminiCli);
         assert_eq!(s.detection, DetectionSettings::default());
+    }
+
+    #[test]
+    fn integrations_default_and_round_trip() {
+        let s = Settings::default();
+        assert_eq!(s.integrations.graph_tenant, "organizations");
+        assert_eq!(s.integrations.jira_issue_type, "Task");
+        assert!(s.detection.always_record.is_empty());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        // A file with part of the section loads the rest as defaults.
+        std::fs::write(&path, r#"{"integrations":{"jira_project":"OPS"}}"#).unwrap();
+        let mut s = Settings::load(&path);
+        assert_eq!(s.integrations.jira_project.as_deref(), Some("OPS"));
+        assert_eq!(s.integrations.jira_issue_type, "Task");
+        s.detection.always_record.push("Weekly sync".into());
+        s.save(&path).unwrap();
+        assert_eq!(Settings::load(&path), s);
     }
 
     #[test]
