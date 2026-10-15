@@ -1,0 +1,30 @@
+[package]
+name = "switchscribe-app"
+description = "switchscribe desktop application (GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "switchscribe"
+path = "src/main.rs"
+
+[dependencies]
+switchscribe-capture.workspace = true
+switchscribe-pipeline.workspace = true
+switchscribe-speakers.workspace = true
+switchscribe-store.workspace = true
+switchscribe-agent.workspace = true
+switchscribe-integrations.workspace = true
+gpui-kit.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
