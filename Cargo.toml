@@ -37,10 +37,19 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 # Audio: Opus in Ogg for the two tracks (libopus is built from source by opusic-sys, so
 # CMake is needed at build time); WASAPI for capture and sysinfo to find Teams on Windows.
 opus = "0.4"
+cpal = "0.18"
 ogg = "0.9"
 wasapi = "0.26"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 tray-icon = { version = "0.26", default-features = false }
+
+# Speech: whisper.cpp (and its Silero VAD) through whisper-rs, built from source with
+# CMake. GPU backends are opt-in features of the app (`vulkan`, `cuda`).
+whisper-rs = "0.16"
+
+# Model downloads: blocking HTTPS, verified against the server's SHA-256.
+ureq = { version = "3", features = ["platform-verifier"] }
+sha2 = "0.11"
 
 # serialization
 serde = { version = "1", features = ["derive"] }

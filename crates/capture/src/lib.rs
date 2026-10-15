@@ -7,8 +7,10 @@
 
 pub mod audio;
 pub mod ogg_opus;
+mod playback;
 mod recorder;
 mod source;
+mod stretch;
 #[cfg(windows)]
 mod windows;
 
@@ -16,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub use playback::{Player, envelope};
 pub use recorder::{Backend, CAPTURE_FILE, Monitor, Notice, Recorder, Recording, TrackReport};
 pub use source::{FakeSource, FakeVoice, OpenFn, Opened, Source};
 

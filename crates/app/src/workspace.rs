@@ -1,6 +1,7 @@
 //! The main window: title bar, meetings sidebar (260 px), the main pane and the Ask panel
 //! (360 px), laid out like the prototype. The sidebar and the Ask panel collapse.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -12,7 +13,7 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AnyWindowHandle, AppContext as _, Context, Entity, FocusHandle, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px, svg,
 };
 use switchscribe_capture::{Backend, InputDevice, Recorder, RecorderState, RemoteMode};
@@ -24,6 +25,8 @@ use switchscribe_store::{
 use crate::actions;
 use crate::appearance::{rpx, ts};
 use crate::ask_panel::{AskEvent, AskPanel};
+use crate::player_bar::Playback;
+use crate::processing::Jobs;
 use crate::recording::{self, Banner, NotesDoc, Session};
 use crate::theme::{MONO, Palette, SANS, palette};
 use crate::ui::{self, Kind};
@@ -50,6 +53,8 @@ pub struct Startup {
     pub store_error: Option<String>,
     /// Microphones, default first (empty where capture is unsupported).
     pub devices: Vec<InputDevice>,
+    /// Models in the models folder, by id.
+    pub installed_models: HashSet<&'static str>,
 }
 
 /// The main pane's screens.
@@ -88,7 +93,7 @@ pub enum Tab {
 pub struct Workspace {
     pub(crate) paths: Paths,
     pub(crate) settings: Settings,
-    store: SharedStore,
+    pub(crate) store: SharedStore,
     pub(crate) demo: bool,
     store_error: Option<String>,
     pub(crate) meetings: Vec<Meeting>,
@@ -98,8 +103,16 @@ pub struct Workspace {
     pub(crate) tab: Tab,
     /// The loaded transcript: meeting id and its segments.
     pub(crate) transcript: Option<(String, Vec<Segment>)>,
-    /// The cued moment of the selected meeting, seconds (no audio until M2).
+    /// The cued moment of the selected meeting, seconds.
     pub(crate) playhead: i64,
+    /// The selected meeting's player.
+    pub(crate) playback: Option<Playback>,
+    /// Scrolls the meeting body (the transcript follows playback).
+    pub(crate) body_scroll: ScrollHandle,
+    /// Transcription and model downloads.
+    pub(crate) jobs: Jobs,
+    /// The playhead follows playback.
+    pub(crate) following: bool,
     ask: Entity<AskPanel>,
     ask_open: bool,
     search_input: Entity<InputState>,
@@ -110,7 +123,7 @@ pub struct Workspace {
     /// A recording is being set up.
     starting: bool,
     /// Amber notices above the main pane (capture fallbacks, lost devices).
-    banners: Vec<Banner>,
+    pub(crate) banners: Vec<Banner>,
     /// The selected meeting's notes and bookmarks, read from its folder.
     pub(crate) notes_doc: Option<(String, NotesDoc)>,
     devices: Vec<InputDevice>,
@@ -168,6 +181,10 @@ impl Workspace {
             tab: Tab::Summary,
             transcript: None,
             playhead: 0,
+            playback: None,
+            body_scroll: ScrollHandle::new(),
+            following: false,
+            jobs: Jobs::new(s.installed_models),
             ask,
             ask_open,
             search_input,
@@ -191,6 +208,20 @@ impl Workspace {
         this.focus.focus(window, cx);
         this.load_transcript(cx);
         this.load_notes(cx);
+        this.load_playback(cx);
+        // Meetings left mid-processing (a quit, a crash) pick up where they were.
+        if !this.demo {
+            let waiting: Vec<String> = this
+                .meetings
+                .iter()
+                .rev()
+                .filter(|m| m.status == MeetingStatus::Processing)
+                .map(|m| m.id.clone())
+                .collect();
+            for id in waiting {
+                this.queue_transcription(id, cx);
+            }
+        }
         #[cfg(windows)]
         this.poll_tray(window, cx);
         this
@@ -217,6 +248,7 @@ impl Workspace {
             self.playhead = 0;
             self.load_transcript(cx);
             self.load_notes(cx);
+            self.load_playback(cx);
         }
         cx.notify();
     }
@@ -271,7 +303,16 @@ impl Workspace {
         }
         self.playhead = at;
         self.tab = Tab::Transcript;
+        if let Some(pb) = &mut self.playback {
+            pb.seek_ms(at.max(0) as u64 * 1000);
+        }
         cx.notify();
+    }
+
+    /// Read the selected meeting's transcript again (it was just written).
+    pub(crate) fn reload_transcript(&mut self, cx: &mut Context<Self>) {
+        self.transcript = None;
+        self.load_transcript(cx);
     }
 
     /// Read the selected meeting's transcript on a background thread.
@@ -335,7 +376,7 @@ impl Workspace {
 
     /// Write the settings file on a background thread (never for the demo, which leaves
     /// the data folder alone).
-    fn save_settings(&self, cx: &mut Context<Self>) {
+    pub(crate) fn save_settings(&self, cx: &mut Context<Self>) {
         if self.demo {
             return;
         }
@@ -706,15 +747,20 @@ impl Workspace {
                             m.status = MeetingStatus::Processing;
                         }
                         ws.banners.extend(recording::empty_recording(&rec));
+                        if rec.tracks.iter().any(|t| t.file.is_some()) {
+                            ws.queue_transcription(id.clone(), cx);
+                        }
                     }
                     Err(e) => ws.banners.push(Banner::plain(format!(
                         "Could not finish the recording: {e}"
                     ))),
                 }
-                // Nothing processes recordings until M2.
-                ws.set_tray(RecorderState::Idle);
+                if ws.jobs.transcription(&id).is_none() {
+                    ws.set_tray(RecorderState::Idle);
+                }
                 ws.notes_doc = None;
                 ws.load_notes(cx);
+                ws.load_playback(cx);
                 cx.notify();
             });
         })
@@ -745,7 +791,7 @@ impl Workspace {
         }
     }
 
-    fn set_tray(&mut self, state: RecorderState) {
+    pub(crate) fn set_tray(&mut self, state: RecorderState) {
         #[cfg(windows)]
         if let Some(tray) = &mut self.tray {
             tray.set_state(state);
@@ -1652,6 +1698,8 @@ impl Workspace {
                             .into_any_element(),
                     ))
                     .child(row("Microphone", mics.into_any_element()))
+                    .child(ui::section_label("Models", p.fg3).mt(rpx(18.)).mb(rpx(4.)))
+                    .child(self.render_models(p, cx))
                     .child(
                         ui::section_label("Everything else", p.fg3)
                             .mt(rpx(18.))
@@ -1685,16 +1733,6 @@ impl Workspace {
                         "Auto-stop after silence",
                         text(format!("{} min", s.detection.auto_stop_minutes)),
                     ))
-                    .child(row(
-                        "Transcription model",
-                        text(
-                            s.models
-                                .transcription_model
-                                .clone()
-                                .unwrap_or_else(|| "None installed".to_owned()),
-                        ),
-                    ))
-                    .child(row("Use GPU", on(s.models.use_gpu)))
                     .child(row("Live captions", on(s.models.live_captions)))
                     .child(row(
                         "Coding CLI",

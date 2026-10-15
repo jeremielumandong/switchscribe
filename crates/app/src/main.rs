@@ -14,6 +14,8 @@ mod format;
 mod live_view;
 mod meeting_view;
 mod mini_recorder;
+mod player_bar;
+mod processing;
 mod recording;
 mod theme;
 #[cfg(windows)]
@@ -79,6 +81,7 @@ fn startup(demo: bool) -> Result<Startup> {
     let meetings = store.meetings()?;
     let people = store.people()?;
     let devices = switchscribe_capture::input_devices();
+    let installed_models = processing::scan_models(&paths.models_dir());
     tracing::info!(
         data = %paths.data.display(),
         meetings = meetings.len(),
@@ -94,6 +97,7 @@ fn startup(demo: bool) -> Result<Startup> {
         demo,
         store_error,
         devices,
+        installed_models,
     })
 }
 

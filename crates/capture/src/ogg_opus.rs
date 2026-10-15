@@ -163,9 +163,22 @@ impl<W: Write> OpusWriter<W> {
     }
 }
 
-/// Decode an Ogg Opus file to mono 48 kHz samples, with the encoder delay and end padding
-/// trimmed.
+/// Decode a whole file to mono samples at 48 kHz, with the encoder delay trimmed.
 pub fn decode_file(path: &Path) -> Result<Vec<f32>> {
+    decode_file_at(path, SAMPLE_RATE)
+}
+
+/// Decode a whole file to mono samples at `rate` (8, 12, 16, 24 or 48 kHz; Opus decodes
+/// natively at each), with the encoder delay trimmed.
+pub fn decode_file_at(path: &Path, rate: u32) -> Result<Vec<f32>> {
+    let mut out = Vec::new();
+    decode_stream(path, rate, &mut |chunk| out.extend_from_slice(chunk))?;
+    Ok(out)
+}
+
+/// Decode a file to mono samples at `rate`, handing them to `sink` a packet at a time,
+/// so a long meeting never has to sit in memory at full rate. Returns the sample count.
+pub fn decode_stream(path: &Path, rate: u32, sink: &mut dyn FnMut(&[f32])) -> Result<usize> {
     let file = File::open(path).map_err(|e| io_err(path, e))?;
     let mut reader = PacketReader::new(BufReader::new(file));
     let head = reader
@@ -180,37 +193,67 @@ pub fn decode_file(path: &Path) -> Result<Vec<f32>> {
         _ => return Err(bad(path, "unsupported channel count")),
     };
     let ch = channels as usize;
-    let pre_skip = usize::from(u16::from_le_bytes([head.data[10], head.data[11]]));
+    // Granule positions and pre-skip count 48 kHz samples whatever the decode rate.
+    let scale = |n: u64| (n * u64::from(rate) / u64::from(SAMPLE_RATE)) as usize;
+    let pre_skip = scale(u64::from(u16::from_le_bytes([
+        head.data[10],
+        head.data[11],
+    ])));
     // Comment header.
     reader
         .read_packet()?
         .ok_or_else(|| bad(path, "missing comment header"))?;
 
-    let mut decoder = opus::Decoder::new(SAMPLE_RATE, channels)?;
+    let mut decoder = opus::Decoder::new(rate, channels)?;
     let mut buf = vec![0f32; 5760 * ch];
-    let mut out = Vec::new();
+    // The last packet is held back: only the final granule says how much of it is real.
+    let mut held: Vec<f32> = Vec::new();
+    let mut out = Trimmed {
+        to_skip: pre_skip,
+        emitted: 0,
+        sink,
+    };
     let mut last_granule = None;
     while let Some(packet) = reader.read_packet()? {
         let n = decoder.decode_float(&packet.data, &mut buf, false)?;
+        out.emit(&held);
+        held.clear();
         if ch == 1 {
-            out.extend_from_slice(&buf[..n]);
+            held.extend_from_slice(&buf[..n]);
         } else {
-            out.extend(crate::audio::downmix(&buf[..n * ch], 2));
+            held.extend(crate::audio::downmix(&buf[..n * ch], 2));
         }
         if packet.last_in_page() {
             last_granule = Some(packet.absgp_page());
         }
     }
-    let end = last_granule
-        .and_then(|g| usize::try_from(g).ok())
-        .unwrap_or(out.len())
-        .min(out.len());
-    if pre_skip >= end {
-        return Ok(Vec::new());
+    if let Some(g) = last_granule {
+        // Samples the stream really holds, counted from the start including pre-skip.
+        let before = pre_skip - out.to_skip + out.emitted;
+        held.truncate(scale(g).saturating_sub(before));
     }
-    out.truncate(end);
-    out.drain(..pre_skip);
-    Ok(out)
+    out.emit(&held);
+    let emitted = out.emitted;
+    Ok(emitted)
+}
+
+/// Drops the encoder delay from the front of a decoded stream and passes on the rest.
+struct Trimmed<'a> {
+    to_skip: usize,
+    emitted: usize,
+    sink: &'a mut dyn FnMut(&[f32]),
+}
+
+impl Trimmed<'_> {
+    fn emit(&mut self, chunk: &[f32]) {
+        let skip = self.to_skip.min(chunk.len());
+        self.to_skip -= skip;
+        let rest = &chunk[skip..];
+        if !rest.is_empty() {
+            (self.sink)(rest);
+            self.emitted += rest.len();
+        }
+    }
 }
 
 fn bad(path: &Path, what: &str) -> Error {
@@ -247,6 +290,23 @@ mod tests {
         // Lossy, but the level survives: RMS of a 0.3 sine is about 0.212.
         let level = crate::audio::rms(&out[4800..out.len() - 4800]);
         assert!((level - 0.212).abs() < 0.03, "{level}");
+
+        // Decoding at a lower rate gives the same length in time, streamed or not.
+        for rate in [16_000, 24_000] {
+            let low = decode_file_at(&path, rate).unwrap();
+            let expect = input.len() * rate as usize / SAMPLE_RATE as usize;
+            assert!(
+                low.len().abs_diff(expect) <= 1,
+                "{rate}: {} vs {expect}",
+                low.len()
+            );
+            let level = crate::audio::rms(&low[low.len() / 10..low.len() * 9 / 10]);
+            assert!((level - 0.212).abs() < 0.03, "{rate}: {level}");
+            let mut chunks = 0;
+            let n = decode_stream(&path, rate, &mut |_| chunks += 1).unwrap();
+            assert_eq!(n, low.len());
+            assert!(chunks > 10);
+        }
     }
 
     #[test]

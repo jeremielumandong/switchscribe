@@ -50,6 +50,24 @@ icon. Done when a 30-minute Teams call records both tracks cleanly.
 VAD, post-call Whisper per track, merged transcript, audio player synced to segments,
 model manager.
 
+- [x] `SpeechEngine` on whisper.cpp (whisper-rs): beam search, language detected once
+      per meeting and reused, attendee names and title as the prompt, noise markers
+      dropped.
+- [x] VAD: Silero (ggml, through whisper.cpp) with a level-based fallback; speech is
+      grouped into chunks of up to 28 s so silence never reaches the model.
+- [x] Per-track transcription merged into one transcript; `transcript.json` kept in the
+      meeting folder; segments stored and indexed; the meeting turns `ready`.
+- [x] Processing queue on its own thread: starts when a recording stops and at startup
+      for meetings left `processing`; the stepper shows real progress.
+- [x] Model manager in Settings: Base, Small, Large v3 Turbo (q5 and full); download
+      with progress, SHA-256 check and cancel; Use / Remove; GPU switch; an amber
+      banner when no model is installed.
+- [x] Audio player: both tracks mixed, play / pause, 1× 1.25× 1.5× 2× without pitch
+      change (WSOLA), skip silence, speaker lanes with the playhead, click to seek,
+      the transcript line follows and scrolls; Play on the active line.
+- [ ] Real-machine check: download a model and transcribe a recorded Teams call on
+      Windows; play it back through the speakers at each speed.
+
 ## M3 Speakers
 
 Diarization on the Teams track, Name-a-speaker card, People screen, voiceprint matching.
@@ -79,4 +97,11 @@ Live captions, onboarding, error states, signed installer and auto-update.
 - Mini recorder: snap to screen edges, and expand on hover with the title and a live
   caption line (with M6 captions).
 - Settings: a test recording with playback (onboarding, M6).
-- Echo bleed: match mic segments against the loopback track (M2/M3).
+- Echo bleed: match mic segments against the loopback track (M3).
+- GPU builds: a `vulkan` (Windows/Linux) and `cuda` feature pass through to whisper-rs;
+  the release pipeline (M6) decides which build ships.
+- A Retry action for a failed transcription (today it retries at the next start).
+- Drag the playhead (click-to-seek only today) and keyboard shortcuts for the player
+  (space, arrows).
+- Large meetings: the player holds 24 kHz 16-bit audio in memory (about 170 MB an
+  hour); stream from the Opus files if long recordings make that a problem.
