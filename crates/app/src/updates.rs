@@ -1,7 +1,8 @@
 //! Updates (M6): a check against GitHub Releases shortly after start and every few hours,
 //! a title-bar button when a newer version is out, and Settings → Updates. Installing
 //! downloads the signed installer (its SHA-256 checked), runs it silently through
-//! `process::command` and quits; the installer starts the new version.
+//! `process::command` and quits; the installer starts the new version. On macOS and Linux
+//! the button opens the release page instead.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -115,8 +116,10 @@ impl Workspace {
             cx.notify();
             return;
         }
-        if release.sha256.is_none() {
-            // Without a checksum the download is refused; send them to the page instead.
+        // Send them to the release page instead when the installer would not do: it is
+        // Windows-only (macOS and Linux get the DMG or AppImage there), and a download
+        // without a checksum is refused.
+        if !cfg!(windows) || release.sha256.is_none() {
             cx.open_url(&release.page_url);
             return;
         }

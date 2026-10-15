@@ -274,7 +274,7 @@ Non-obvious calls, newest last. Append when you make one.
 
 ## M6 release and updates
 
-- **Inno Setup, per user.** `installer/switchscribe.iss` installs into
+- **Inno Setup, per user.** `packaging/windows/switchscribe.iss` installs into
   `%LOCALAPPDATA%\Programs\switchscribe` with `PrivilegesRequired=lowest`: no admin rights
   and no UAC prompt, which matters on locked-down work laptops and lets the in-app updater
   run the next installer silently. MSIX was rejected: its container virtualizes
@@ -290,11 +290,8 @@ Non-obvious calls, newest last. Append when you make one.
   /CLOSEAPPLICATIONS`) and quits; `CloseApplications=yes` closes anything still holding
   the files, and a silent install starts the new version again (`[Run]` with
   `Check: WizardSilent`).
-- **Signing is optional in CI.** A PFX (`WINDOWS_CERT_PFX`) or Azure Trusted Signing signs
-  the exe and then the installer, with RFC 3161 timestamps. Without either, the workflow
-  still publishes an unsigned build with a warning annotation, so releases are never
-  blocked on a certificate; SmartScreen will warn those users. The embedded uninstaller is
-  not signed yet (Inno's `SignTool=` setting would do it; follow-up).
+- **Signing is optional in CI.** Superseded by the release pipeline below: Azure Trusted
+  Signing over OIDC signs the exe, its DLLs, the embedded uninstaller and the installer.
 - **The `.sha256` sidecar is an integrity check, not a trust anchor.** It comes from the
   same release as the installer, so it catches truncated or corrupted downloads (and a
   wrong asset), but anyone who can replace the installer on the release can replace its
@@ -307,8 +304,9 @@ Non-obvious calls, newest last. Append when you make one.
   `vX.Y.Z`, and compares versions with semver precedence (no `semver` crate for one
   comparison). The unauthenticated API allows 60 requests an hour per IP; a 403/429 is
   reported as "try again later", so check at most a few times a day.
-- **The tag must match `[workspace.package] version`,** checked by the workflow, so the
-  running build's `CARGO_PKG_VERSION` is what the update check compares against.
+- **The tag is `v` + `[workspace.package] version`,** created when the draft release is
+  published, so the running build's `CARGO_PKG_VERSION` is what the update check compares
+  against.
 - **Uninstall keeps the data folder.** `%APPDATA%\switchscribe` (recordings, transcripts,
   voiceprints, models, settings) is never deleted by the uninstaller; reinstalling must
   not lose meetings. Only the program files, the shortcut, the `switchscribe://` key and
@@ -353,3 +351,38 @@ Non-obvious calls, newest last. Append when you make one.
 - **Update checks** start a minute after launch and repeat every six hours, never in the
   demo; failures are only shown when the user pressed Check now. Installing refuses while
   recording.
+
+## Release pipeline: Windows, macOS, Linux
+
+- **Switchyard's pipeline, as switchhead ported it.** Three manually-run workflows on
+  `main` (`release-windows.yml`, `release-macos.yml`, `release.yml` for Linux), each gated
+  on CI passing for that commit, upload to one shared draft release that
+  `scripts/upload-release-assets.py` creates; a human publishes it. Bump version opens a
+  PR. This replaced M6's tag-triggered, Windows-only workflow, which had never run. Signing
+  is optional as in switchhead (Switchyard's Windows job requires it): an unsigned package
+  is kept as a workflow artifact and only goes on the draft with `upload_unsigned`.
+- **Windows keeps Inno Setup,** not Switchyard's NSIS: the updater, the `AppId`, the
+  `switchscribe://` scheme and Start with Windows are all built on it. Inno's `SignTool`
+  (ISCC `/S`) signs the uninstaller it embeds, which closes the M6 follow-up. Windows
+  signing moved from PFX / client-secret secrets to Switchyard's Azure Trusted Signing
+  over OIDC (`windows-release` environment), so one setup serves all three apps.
+- **The Visual C++ runtime ships app-local** (`vcruntime140.dll`, `vcruntime140_1.dll`,
+  `msvcp140.dll` from the runner's System32, already Microsoft-signed). Switchyard links
+  the CRT statically instead, but sherpa-onnx's prebuilt DLLs need the shared runtime
+  anyway.
+- **`GGML_NATIVE=OFF` for release builds.** whisper-rs passes `GGML_*` variables to
+  whisper.cpp's CMake, which otherwise compiles for the build machine's CPU
+  (`-march=native`): a runner with AVX-512 would make a build that crashes on older
+  laptops. With it off, x86_64 gets ggml's AVX2/FMA/F16C baseline and Apple arm64 the
+  compiler's default (`apple-m1`).
+- **macOS bundles sherpa-onnx's dylibs in `Contents/Frameworks`** (merged with `lipo` for
+  the universal build) with an `@executable_path/../Frameworks` rpath added to the binary,
+  and signs them before the app. The AppImage keeps the `.so` files beside the binary,
+  which its `$ORIGIN` rpath (`crates/app/build.rs`) finds.
+- **Capture stays Windows-only.** `switchscribe-capture` already compiles everywhere
+  (WASAPI behind `cfg(windows)`, `Error::Unsupported` elsewhere), so nothing needed gating;
+  CI now runs clippy and tests on macOS as well. The updater opens the release page on
+  macOS and Linux rather than downloading the Windows installer.
+- **An app icon** (record button beside transcript lines, `packaging/icons/`) was drawn for
+  the bundle, the AppImage and the installer; replace the SVGs and rerun `generate.py` to
+  change it.

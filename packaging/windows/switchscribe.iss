@@ -1,8 +1,8 @@
 ; switchscribe installer (Inno Setup 6).
 ;
-; Built by .github/workflows/release.yml (see installer/README.md):
-;   ISCC.exe /DAppVersion=0.2.0 /DSourceDir=dist /O"out" installer\switchscribe.iss
-; produces out\switchscribe-setup-0.2.0-x64.exe. The update checker
+; Built by packaging/windows/build-windows.ps1 (see packaging/README.md), which runs
+;   ISCC.exe /DAppVersion=0.2.0 /DSourceDir=<staged exe and DLLs> /O<dist> [/DSign /Ssignone=...]
+; and produces dist\switchscribe-setup-0.2.0-x64.exe. The update checker
 ; (crates/integrations/src/update.rs) looks for exactly that asset name and runs it with
 ; /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS (INSTALLER_ARGS there).
 ; A relative SourceDir resolves against this script's folder.
@@ -20,7 +20,7 @@
   #error Pass the version: ISCC /DAppVersion=X.Y.Z
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\dist"
+  #error Pass the staged files: ISCC /DSourceDir=<folder with switchscribe.exe>
 #endif
 
 #define AppName "switchscribe"
@@ -54,12 +54,18 @@ OutputBaseFilename={#AppName}-setup-{#AppVersion}-x64
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayIcon={app}\{#AppExe}
+SetupIconFile={#SourcePath}..\icons\switchscribe.ico
+UninstallDisplayIcon={app}\switchscribe.ico
 UninstallDisplayName={#AppName}
 ; Close a running switchscribe (Restart Manager) before replacing its files. The app's
 ; single instance is a loopback port, not a mutex, so there is no AppMutex.
 CloseApplications=yes
 RestartApplications=no
+#ifdef Sign
+; build-windows.ps1 -Sign defines the "signone" tool (ISCC /S): the uninstaller written into
+; the installer and the installer itself are signed as they are produced.
+SignTool=signone
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -69,12 +75,13 @@ Name: "startup"; Description: "Start {#AppName} with Windows (in the tray)"; Gro
 
 [Files]
 Source: "{#SourceDir}\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
-; sherpa-onnx (speaker identification) ships as shared libraries that must sit next to
-; the exe, along with any other DLL the build put there.
-Source: "{#SourceDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; sherpa-onnx (speaker identification) and onnxruntime ship as shared libraries that must
+; sit next to the exe, with the app-local Visual C++ runtime.
+Source: "{#SourceDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}..\icons\switchscribe.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{userprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"
+Name: "{userprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; IconFilename: "{app}\switchscribe.ico"
 
 [Registry]
 ; Start with Windows: the app treats --background as "start in the tray, no window".

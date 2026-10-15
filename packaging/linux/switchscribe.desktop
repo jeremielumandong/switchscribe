@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=switchscribe
+GenericName=Meeting Recorder
+Comment=Local-first meeting recorder, transcriber and notes
+Exec=switchscribe %U
+Icon=switchscribe
+Terminal=false
+Categories=Office;AudioVideo;Audio;
+Keywords=meeting;transcript;transcribe;notes;teams;recorder;
+StartupWMClass=switchscribe

@@ -378,11 +378,15 @@ fn run(
     while !stop.load(Ordering::Relaxed) {
         r.fill(state, &mut buf);
         next += Duration::from_millis(10);
-        if let Some(wait) = next.checked_duration_since(Instant::now()) {
+        let now = Instant::now();
+        if let Some(wait) = next.checked_duration_since(now) {
             std::thread::sleep(wait);
-        } else {
-            next = Instant::now();
+        } else if now - next > Duration::from_millis(250) {
+            // Stalled (a suspended machine): pick up from now rather than racing ahead.
+            next = now;
         }
+        // A sleep that overshot (macOS coalesces timers) is made up by rendering the next
+        // chunks without sleeping, so the clock keeps real time.
     }
 }
 

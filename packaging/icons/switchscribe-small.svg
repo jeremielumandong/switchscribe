@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- switchscribe icon simplified for 16-32 px: the same mark, larger, with heavier strokes. -->
+  <rect x="0" y="0" width="1024" height="1024" rx="192" fill="#18181D"/>
+  <g transform="translate(32 32) scale(20)" stroke-linecap="round">
+    <circle cx="13" cy="24" r="8.5" fill="none" stroke="#E4E5E8" stroke-width="4.5"/>
+    <circle cx="13" cy="24" r="4.5" fill="#ED4042"/>
+    <g fill="none" stroke-width="6">
+      <path d="M29 15h11" stroke="#6ED9D2"/>
+      <path d="M29 24h11" stroke="#B9BCC3"/>
+      <path d="M29 33h6" stroke="#B9BCC3"/>
+    </g>
+  </g>
+</svg>

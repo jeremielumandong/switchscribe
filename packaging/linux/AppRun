@@ -1,0 +1,5 @@
+#!/bin/sh
+# AppImage entry point. sherpa-onnx's shared libraries sit next to the binary in usr/bin,
+# which its $ORIGIN rpath finds.
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/bin/switchscribe" "$@"
