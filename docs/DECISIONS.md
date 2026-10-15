@@ -119,6 +119,39 @@ Non-obvious calls, newest last. Append when you make one.
   the active row can be scrolled into view by index; it only follows while playing, so
   it never fights the user's own scrolling.
 
+## M3 Speakers
+
+- **sherpa-onnx, shared libraries:** pyannote segmentation 3.0 plus NeMo TitaNet-small
+  embeddings through `sherpa-onnx` 1.13 with its `shared` feature. Linked statically,
+  onnxruntime and whisper.cpp each carry their own copy of parts of the C++ standard
+  library and the process crashes in `std::regex` (`munmap_chunk(): invalid pointer`);
+  on Windows the static build is also `/MT`, which mismatches the rest. So
+  `sherpa-onnx-c-api` and `onnxruntime` ship as DLLs / `.so` files next to the
+  executable (Linux finds them through an `$ORIGIN` rpath set in the app's `build.rs`).
+- **Embeddings and thresholds:** TitaNet-small (192 dims, 40 MB) separated speakers
+  best on sherpa-onnx's four-speaker sample: one speaker's turns scored 0.51–0.74
+  against each other, different speakers at most 0.47. So a match is high at 0.6 and
+  medium at 0.45, and diarization clusters at 0.9 (it found the four speakers; 0.5
+  found eight). Samples use up to 30 s of a speaker's longest turns.
+- **Matching:** one-to-one, strongest pairs first. Attendees win at medium; anyone else
+  only at high, so a colleague who was not invited is named only when the voice is
+  unmistakable. The user's voiceprint is left out of the Teams-track library: their
+  voice there is echo, and naming it would hide a real speaker.
+- **Mic is the user:** only the Teams track is diarized. The mic track's sample feeds
+  the user's voiceprint after every meeting, which is how they are "enrolled" until
+  onboarding (M6) records a dedicated sample.
+- **Voiceprints at rest:** sealed with DPAPI (`CryptProtectData`, current user) on
+  Windows; elsewhere stored plain, marked by a one-byte prefix so a blob says how to
+  open it. Rows that will not open (another user, another machine) are skipped, not
+  errors.
+- **Naming:** naming a speaker updates every line with that label, adds them to the
+  meeting's attendees, folds the cluster's sample into their voiceprint when Remember
+  is on (a running mean), and rewrites `speakers.json`. A meeting is `needs-labels`
+  while any cluster is unconfirmed. "Later" only hides the card for this session.
+- **Failure is soft:** if identification fails (models missing or broken), the
+  transcript stays with its Teams lines unnamed; transcription never fails because of
+  speakers.
+
 ## No console windows (Windows)
 
 - Release builds use the GUI subsystem, so the app itself never opens a console (debug

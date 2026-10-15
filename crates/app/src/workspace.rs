@@ -18,8 +18,8 @@ use gpui_kit::{
 };
 use switchscribe_capture::{Backend, InputDevice, Recorder, RecorderState, RemoteMode};
 use switchscribe_store::{
-    CaptureMode, Meeting, MeetingStatus, NewMeeting, Paths, Person, SearchHit, Segment, Settings,
-    Store, group_by_date,
+    CaptureMode, Meeting, MeetingStatus, NewMeeting, Paths, Person, PersonStats, SearchHit,
+    Segment, Settings, Store, StoredVoiceprint, group_by_date,
 };
 
 use crate::actions;
@@ -28,6 +28,7 @@ use crate::ask_panel::{AskEvent, AskPanel};
 use crate::player_bar::Playback;
 use crate::processing::Jobs;
 use crate::recording::{self, Banner, NotesDoc, Session};
+use crate::speakers::{self, Speakers};
 use crate::theme::{MONO, Palette, SANS, palette};
 use crate::ui::{self, Kind};
 use crate::{live_view, meeting_view, mini_recorder};
@@ -55,6 +56,10 @@ pub struct Startup {
     pub devices: Vec<InputDevice>,
     /// Models in the models folder, by id.
     pub installed_models: HashSet<&'static str>,
+    /// The voiceprint library.
+    pub voiceprints: Vec<StoredVoiceprint>,
+    /// Per-person numbers for the People screen.
+    pub people_stats: Vec<PersonStats>,
 }
 
 /// The main pane's screens.
@@ -113,6 +118,8 @@ pub struct Workspace {
     pub(crate) jobs: Jobs,
     /// The playhead follows playback.
     pub(crate) following: bool,
+    /// Speaker files, the library, and the naming card's state.
+    pub(crate) speakers: Speakers,
     ask: Entity<AskPanel>,
     ask_open: bool,
     search_input: Entity<InputState>,
@@ -185,6 +192,7 @@ impl Workspace {
             body_scroll: ScrollHandle::new(),
             following: false,
             jobs: Jobs::new(s.installed_models),
+            speakers: Speakers::new(s.voiceprints, s.people_stats, window, cx),
             ask,
             ask_open,
             search_input,
@@ -207,6 +215,7 @@ impl Workspace {
         }
         this.focus.focus(window, cx);
         this.load_transcript(cx);
+        this.load_speakers(cx);
         this.load_notes(cx);
         this.load_playback(cx);
         // Meetings left mid-processing (a quit, a crash) pick up where they were.
@@ -240,13 +249,14 @@ impl Workspace {
         self.people.iter().find(|p| p.id == id)
     }
 
-    fn select(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(crate) fn select(&mut self, id: String, cx: &mut Context<Self>) {
         if self.recording.as_ref().is_some_and(|s| s.meeting_id == id) {
             self.screen = Screen::Live;
         } else if self.screen != Screen::Meeting(id.clone()) {
             self.screen = Screen::Meeting(id);
             self.playhead = 0;
             self.load_transcript(cx);
+            self.load_speakers(cx);
             self.load_notes(cx);
             self.load_playback(cx);
         }
@@ -1233,7 +1243,7 @@ impl Workspace {
                 "Action items from every meeting land here once summaries run (M4), with owners, due dates and Send to Jira (M5).",
                 p,
             ),
-            Screen::People => self.render_people(p),
+            Screen::People => speakers::people_screen(self, p, cx),
             Screen::Search => self.render_search(p, cx),
             Screen::Settings => self.render_settings(p, cx),
         };
@@ -1339,78 +1349,6 @@ impl Workspace {
             .flex_col()
             .child(screen_title(title, None, p))
             .child(ui::empty_state("Nothing here yet", body, p))
-            .into_any_element()
-    }
-
-    fn render_people(&self, p: &Palette) -> AnyElement {
-        let header = |text: &'static str| {
-            div()
-                .px(rpx(4.))
-                .py(rpx(8.))
-                .border_b_1()
-                .border_color(p.bd)
-                .text_size(ts::SMALL)
-                .text_color(p.fg3)
-                .child(text)
-        };
-        let rows = self.people.iter().map(|person| {
-            div()
-                .flex()
-                .items_center()
-                .gap(rpx(10.))
-                .px(rpx(4.))
-                .py(rpx(10.))
-                .border_b_1()
-                .border_color(p.elev)
-                .when(person.is_me, |d| d.bg(p.surface))
-                .child(
-                    div()
-                        .size(rpx(12.))
-                        .rounded(px(3.))
-                        .bg(p.speaker(person.color)),
-                )
-                .child(
-                    div()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(person.name.clone()),
-                )
-                .when(person.is_me, |d| {
-                    d.child(
-                        div()
-                            .text_size(ts::SMALL)
-                            .text_color(p.fg3)
-                            .child("you · mic track"),
-                    )
-                })
-        });
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .child(screen_title(
-                "People",
-                Some("Voiceprints are stored encrypted on this machine and can be deleted per person."),
-                p,
-            ))
-            .child(if self.people.is_empty() {
-                ui::empty_state(
-                    "No voiceprints yet",
-                    "You enroll your own voice during onboarding; colleagues are added when you name a speaker (M3).",
-                    p,
-                )
-                .into_any_element()
-            } else {
-                div()
-                    .id("people")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .px(rpx(20.))
-                    .pb(rpx(20.))
-                    .text_size(ts::UI)
-                    .child(header("Name"))
-                    .children(rows)
-                    .into_any_element()
-            })
             .into_any_element()
     }
 

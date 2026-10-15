@@ -4,8 +4,11 @@
 //! The speech engine and the diarizer sit behind traits so models can be swapped
 //! (whisper-rs, sherpa-onnx, polyvoice) without touching the pipeline.
 
+pub mod identify;
 pub mod job;
 pub mod models;
+#[cfg(feature = "sherpa")]
+pub mod sherpa;
 pub mod vad;
 #[cfg(feature = "whisper")]
 pub mod whisper;
@@ -97,6 +100,12 @@ pub struct Turn {
     pub end_ms: i64,
     /// Anonymous cluster index (Speaker 1, 2, …).
     pub cluster: usize,
+}
+
+/// Turns speech into a speaker embedding (a voiceprint sample).
+pub trait Embedder: Send + Sync {
+    /// The embedding of 16 kHz speech from one speaker.
+    fn embed(&self, audio: &[f32]) -> Result<Vec<f32>>;
 }
 
 /// Who spoke when, on the Teams track.

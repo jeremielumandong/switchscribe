@@ -544,6 +544,7 @@ impl Workspace {
                 // Start where the meeting was cued.
                 pb.seek_ms(ws.playhead.max(0) as u64 * 1000);
                 ws.playback = Some(pb);
+                ws.start_pending_clip(cx);
                 cx.notify();
             });
         })
@@ -556,6 +557,7 @@ impl Workspace {
             return;
         };
         pb.toggle();
+        self.speakers.clip_end = None;
         self.follow_playback(cx);
         cx.notify();
     }
@@ -563,6 +565,7 @@ impl Workspace {
     /// Play from `at` seconds.
     pub(crate) fn play_from(&mut self, at: i64, cx: &mut Context<Self>) {
         self.cue(at, cx);
+        self.speakers.clip_end = None;
         if let Some(pb) = &mut self.playback {
             pb.play();
         }
@@ -596,7 +599,7 @@ impl Workspace {
     }
 
     /// While playing, move the playhead and keep the active line in view.
-    fn follow_playback(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn follow_playback(&mut self, cx: &mut Context<Self>) {
         if self.following {
             return;
         }
@@ -611,6 +614,13 @@ impl Workspace {
                         ws.following = false;
                         return false;
                     };
+                    // A clip on the naming card stops at its end.
+                    if let Some(end) = ws.speakers.clip_end
+                        && (pb.position_ms() >= end || !pb.is_playing())
+                    {
+                        pb.pause();
+                        ws.speakers.clip_end = None;
+                    }
                     let playing = pb.is_playing();
                     let secs = (pb.position_ms() / 1000) as i64;
                     if secs != ws.playhead {
@@ -639,7 +649,9 @@ impl Workspace {
         if let Some((_, segs)) = &self.transcript
             && let Some(i) = active_segment(segs, self.playhead)
         {
-            self.body_scroll.scroll_to_item(i);
+            // The naming card, when shown, comes before the first line.
+            let card = usize::from(self.naming_cluster().is_some());
+            self.body_scroll.scroll_to_item(i + card);
         }
     }
 }

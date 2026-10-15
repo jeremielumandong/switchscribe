@@ -5,7 +5,11 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 
-use crate::model::{Meeting, MeetingStatus, NewMeeting, NewSegment, Person, SearchHit, Segment};
+use crate::model::{
+    Meeting, MeetingStatus, NewMeeting, NewSegment, Person, PersonStats, SearchHit, Segment,
+    StoredVoiceprint,
+};
+use crate::secret;
 use crate::{Error, Result, io_err};
 
 /// Marks the start of a matched term in [`SearchHit::snippet`].
@@ -62,6 +66,19 @@ const MIGRATIONS: &[&str] = &[
         INSERT INTO segments_fts (segments_fts, rowid, text) VALUES ('delete', old.id, old.text);
         INSERT INTO segments_fts (rowid, text) VALUES (new.id, new.text);
     END;
+    "#,
+    // 2: voiceprints (sealed with DPAPI on Windows), one per person.
+    r#"
+    CREATE TABLE voiceprints (
+        person_id       INTEGER PRIMARY KEY REFERENCES people (id) ON DELETE CASCADE,
+        embedding       BLOB NOT NULL,
+        samples         INTEGER NOT NULL,
+        sample_meeting  TEXT REFERENCES meetings (id) ON DELETE SET NULL,
+        sample_start_ms INTEGER,
+        sample_end_ms   INTEGER,
+        updated_at      INTEGER NOT NULL
+    );
+    CREATE INDEX segments_person ON segments (person_id);
     "#,
 ];
 
@@ -137,6 +154,163 @@ impl Store {
             .conn
             .prepare("SELECT id, name, color, is_me FROM people ORDER BY is_me DESC, name")?;
         let rows = stmt.query_map([], person_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Rename a person.
+    pub fn rename_person(&self, id: i64, name: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE people SET name = ?2 WHERE id = ?1",
+            params![id, name],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a person: their segments keep their speaker label but lose the name, and
+    /// their voiceprint goes with them.
+    pub fn delete_person(&self, id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM people WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Fold `from` into `into`: segments and meeting attendance move over, then `from`
+    /// is deleted. The caller merges the voiceprints.
+    pub fn merge_people(&mut self, from: i64, into: i64) -> Result<()> {
+        if from == into {
+            return Ok(());
+        }
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "UPDATE segments SET person_id = ?2 WHERE person_id = ?1",
+            params![from, into],
+        )?;
+        tx.execute(
+            "UPDATE OR IGNORE meeting_people SET person_id = ?2 WHERE person_id = ?1",
+            params![from, into],
+        )?;
+        tx.execute("DELETE FROM people WHERE id = ?1", [from])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Add a person to a meeting's attendees (after the last), if not already there.
+    pub fn add_attendee(&self, meeting_id: &str, person_id: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO meeting_people (meeting_id, person_id, position)
+             VALUES (?1, ?2, (SELECT COALESCE(MAX(position) + 1, 0)
+                              FROM meeting_people WHERE meeting_id = ?1))",
+            params![meeting_id, person_id],
+        )?;
+        Ok(())
+    }
+
+    /// Replace a meeting's transcript (after speakers are identified).
+    pub fn replace_segments(&mut self, meeting_id: &str, segments: &[NewSegment]) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM segments WHERE meeting_id = ?1", [meeting_id])?;
+        self.add_segments(meeting_id, segments)
+    }
+
+    /// Name every segment of a meeting with speaker label `label`; `None` unnames them.
+    /// Returns how many segments changed.
+    pub fn assign_speaker(
+        &self,
+        meeting_id: &str,
+        label: &str,
+        person_id: Option<i64>,
+    ) -> Result<usize> {
+        Ok(self.conn.execute(
+            "UPDATE segments SET person_id = ?3, low_confidence = 0
+             WHERE meeting_id = ?1 AND speaker_label = ?2",
+            params![meeting_id, label, person_id],
+        )?)
+    }
+
+    /// Every voiceprint this user can read.
+    pub fn voiceprints(&self) -> Result<Vec<StoredVoiceprint>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT person_id, embedding, samples, sample_meeting, sample_start_ms, sample_end_ms
+             FROM voiceprints",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let blob: Vec<u8> = r.get(1)?;
+            let meeting: Option<String> = r.get(3)?;
+            let (start, end): (Option<i64>, Option<i64>) = (r.get(4)?, r.get(5)?);
+            Ok((
+                r.get::<_, i64>(0)?,
+                blob,
+                r.get::<_, u32>(2)?,
+                meeting.zip(start).zip(end).map(|((m, s), e)| (m, s, e)),
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (person_id, blob, samples, sample) = row?;
+            if let Some(bytes) = secret::open(&blob) {
+                out.push(StoredVoiceprint {
+                    person_id,
+                    embedding: secret::bytes_to_floats(&bytes),
+                    samples,
+                    sample,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Store a person's voiceprint, sealed, replacing any previous one. A `sample` of
+    /// `None` keeps the stored sample moment.
+    pub fn set_voiceprint(&self, v: &StoredVoiceprint) -> Result<()> {
+        let blob = secret::seal(&secret::floats_to_bytes(&v.embedding));
+        let (m, s, e) = match &v.sample {
+            Some((m, s, e)) => (Some(m.as_str()), Some(*s), Some(*e)),
+            None => (None, None, None),
+        };
+        self.conn.execute(
+            "INSERT INTO voiceprints
+             (person_id, embedding, samples, sample_meeting, sample_start_ms, sample_end_ms, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%s', 'now'))
+             ON CONFLICT (person_id) DO UPDATE SET
+                 embedding = excluded.embedding,
+                 samples = excluded.samples,
+                 sample_meeting = COALESCE(excluded.sample_meeting, sample_meeting),
+                 sample_start_ms = COALESCE(excluded.sample_start_ms, sample_start_ms),
+                 sample_end_ms = COALESCE(excluded.sample_end_ms, sample_end_ms),
+                 updated_at = excluded.updated_at",
+            params![v.person_id, blob, v.samples, m, s, e],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a person's voiceprint (they stay, with their name, in past meetings).
+    pub fn delete_voiceprint(&self, person_id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM voiceprints WHERE person_id = ?1", [person_id])?;
+        Ok(())
+    }
+
+    /// Per person: meetings heard in, when last heard, and their voiceprint's size.
+    pub fn people_stats(&self) -> Result<Vec<PersonStats>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id,
+                    (SELECT COUNT(DISTINCT s.meeting_id) FROM segments s WHERE s.person_id = p.id),
+                    (SELECT MAX(m.started_at) FROM segments s JOIN meetings m ON m.id = s.meeting_id
+                     WHERE s.person_id = p.id),
+                    COALESCE(v.samples, 0), v.sample_meeting, v.sample_start_ms, v.sample_end_ms
+             FROM people p LEFT JOIN voiceprints v ON v.person_id = p.id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let meeting: Option<String> = r.get(4)?;
+            let (start, end): (Option<i64>, Option<i64>) = (r.get(5)?, r.get(6)?);
+            Ok(PersonStats {
+                person_id: r.get(0)?,
+                meetings: r.get(1)?,
+                last_heard: r.get(2)?,
+                samples: r.get(3)?,
+                sample: meeting.zip(start).zip(end).map(|((m, s), e)| (m, s, e)),
+            })
+        })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -501,5 +675,87 @@ mod tests {
             .execute("DELETE FROM meetings WHERE id = 'm'", [])
             .unwrap();
         assert!(store.search("datadog", 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn voiceprints_people_and_speakers() {
+        let mut store = Store::open_in_memory().unwrap();
+        let me = store.add_person("Jeremie", Some(0), true).unwrap();
+        let priya = store.add_person("Priya", Some(1), false).unwrap();
+        store.insert_meeting(&meeting("m1", 100, vec![me])).unwrap();
+        store
+            .add_segments(
+                "m1",
+                &[
+                    seg(0, Some(me), "hello"),
+                    NewSegment {
+                        speaker_label: "Speaker 1".into(),
+                        low_confidence: true,
+                        ..seg(5, None, "hi there")
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .assign_speaker("m1", "Speaker 1", Some(priya))
+                .unwrap(),
+            1
+        );
+        store.add_attendee("m1", priya).unwrap();
+        store.add_attendee("m1", priya).unwrap();
+        let m = store.meeting("m1").unwrap().unwrap();
+        assert_eq!(
+            m.attendees.iter().map(|p| p.id).collect::<Vec<_>>(),
+            [me, priya]
+        );
+        let segs = store.segments("m1").unwrap();
+        assert_eq!(segs[1].person_id, Some(priya));
+        assert!(!segs[1].low_confidence);
+
+        let v = StoredVoiceprint {
+            person_id: priya,
+            embedding: vec![0.5, -0.25],
+            samples: 1,
+            sample: Some(("m1".into(), 5000, 6000)),
+        };
+        store.set_voiceprint(&v).unwrap();
+        // A later update without a sample keeps the stored one.
+        store
+            .set_voiceprint(&StoredVoiceprint {
+                samples: 2,
+                sample: None,
+                ..v.clone()
+            })
+            .unwrap();
+        let got = store.voiceprints().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].embedding, v.embedding);
+        assert_eq!(got[0].samples, 2);
+        assert_eq!(got[0].sample, v.sample);
+
+        let stats = store.people_stats().unwrap();
+        let ps = stats.iter().find(|s| s.person_id == priya).unwrap();
+        assert_eq!((ps.meetings, ps.last_heard, ps.samples), (1, Some(100), 2));
+
+        // Merging moves segments and attendance; deleting a voiceprint keeps the person.
+        let dup = store.add_person("Priya N", Some(2), false).unwrap();
+        store.assign_speaker("m1", "Speaker 1", Some(dup)).unwrap();
+        store.add_attendee("m1", dup).unwrap();
+        store.merge_people(dup, priya).unwrap();
+        assert_eq!(store.segments("m1").unwrap()[1].person_id, Some(priya));
+        assert_eq!(store.people().unwrap().len(), 2);
+        store.delete_voiceprint(priya).unwrap();
+        assert!(store.voiceprints().unwrap().is_empty());
+        store.rename_person(priya, "Priya Nair").unwrap();
+        store.delete_person(priya).unwrap();
+        assert_eq!(store.segments("m1").unwrap()[1].person_id, None);
+
+        // Replacing segments re-indexes search.
+        store
+            .replace_segments("m1", &[seg(1, None, "replacement words")])
+            .unwrap();
+        assert_eq!(store.search("hello", 10).unwrap().len(), 0);
+        assert_eq!(store.search("replacement", 10).unwrap().len(), 1);
     }
 }

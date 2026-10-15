@@ -72,6 +72,23 @@ model manager.
 
 Diarization on the Teams track, Name-a-speaker card, People screen, voiceprint matching.
 
+- [x] Diarization of the Teams track with sherpa-onnx (pyannote segmentation 3.0 and
+      NeMo TitaNet-small embeddings), after transcription; transcript lines take the
+      speaker they overlap most; `speakers.json` keeps each cluster's sample and clips.
+- [x] Voiceprint matching: one-to-one, attendees first, non-attendees only on a high
+      score; high confidence names the speaker, medium suggests ("?" badge).
+- [x] Voiceprints sealed with DPAPI on Windows (store migration 2); the user's own
+      voiceprint grows from the mic track after every meeting; the user is a person
+      from the first start.
+- [x] Name-a-speaker card: clips to play, suggestions ranked by voice with confidence,
+      a typed name, Remember this voice, Later; Relabel on a Teams line reopens it.
+- [x] People screen: meetings heard, samples, last heard; Play sample, Merge, Forget
+      voice.
+- [x] Settings → Models: the speaker models download with the first transcription
+      model or on their own; the stepper shows Identify speakers.
+- [ ] Real-machine check: a Teams call with three or more people; name one speaker,
+      record another call with them and see them named automatically.
+
 ## M4 Agent
 
 MCP server, CLI runner, summary templates, Summary and Action items tabs, Ask panel, FTS
@@ -97,7 +114,11 @@ Live captions, onboarding, error states, signed installer and auto-update.
 - Mini recorder: snap to screen edges, and expand on hover with the title and a live
   caption line (with M6 captions).
 - Settings: a test recording with playback (onboarding, M6).
-- Echo bleed: match mic segments against the loopback track (M3).
+- Echo bleed: match mic segments against the loopback track (M3 leaves the user's
+  own voice out of the Teams-track library, which hides most of it).
+- Re-identify speakers in meetings transcribed before the speaker models were
+  installed (`transcript.json` is kept for this), and a Re-enroll action on People.
+- Delete a person outright (People only forgets the voice today).
 - GPU builds: a `vulkan` (Windows/Linux) and `cuda` feature pass through to whisper-rs;
   the release pipeline (M6) decides which build ships.
 - A Retry action for a failed transcription (today it retries at the next start).
