@@ -132,7 +132,7 @@ pub struct Segment {
 }
 
 /// A segment to add.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NewSegment {
     /// See [`Segment::start_ms`].
     pub start_ms: i64,

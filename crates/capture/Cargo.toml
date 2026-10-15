@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+cpal.workspace = true
 ogg.workspace = true
 opus.workspace = true
 serde.workspace = true

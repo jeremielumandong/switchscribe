@@ -31,7 +31,8 @@ cargo test --workspace
 
 ## Workspace layout
 
-Dependency direction: `app → everything`; `pipeline, agent, integrations → store`.
+Dependency direction: `app → everything`; `pipeline, agent, integrations → store`;
+`pipeline → capture` (decoding the tracks).
 Nothing depends on `app`.
 
 | Crate | Job |
@@ -83,6 +84,11 @@ Nothing depends on `app`.
 - libopus is built from source (`opusic-sys`), so builds need CMake. Windows-only code
   can be checked from Linux with `rustup target add x86_64-pc-windows-gnu`, the
   `gcc-mingw-w64-x86-64` package and `cargo clippy --target x86_64-pc-windows-gnu`.
+- whisper.cpp (whisper-rs) is built from source with CMake and a C++ compiler, which
+  makes a clean build slow. Playback uses `cpal`, which needs `libasound2-dev` on Linux.
+  Models download from huggingface.co; `SWITCHSCRIBE_DATA/models` holds them.
+- The debug `target/` grows past 20 GB with full debuginfo; if the disk fills, set
+  `debug = "line-tables-only"` for the dev and test profiles in `~/.cargo/config.toml`.
 - Capture threads and device listing join COM's MTA on their own threads; never call
   WASAPI on the UI thread.
 - Screenshots: `Xvfb :99 -screen 0 1440x900x24 &`, then

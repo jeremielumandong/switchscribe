@@ -32,11 +32,11 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Linux system packages for GPUI
+      - name: Linux system packages for GPUI and audio output
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
-            libxcb1-dev libvulkan-dev libfontconfig-dev libfreetype-dev pkg-config
+            libxcb1-dev libvulkan-dev libfontconfig-dev libfreetype-dev libasound2-dev pkg-config
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
