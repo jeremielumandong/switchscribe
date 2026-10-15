@@ -271,3 +271,45 @@ Non-obvious calls, newest last. Append when you make one.
   does not read. This is the one reason `agent` depends on `integrations`.
 - **Approved `create_jira_issue` proposals are created by the app,** which holds the Jira
   token; `mcp::apply_pending` refuses them.
+
+## M6 release and updates
+
+- **Inno Setup, per user.** `installer/switchscribe.iss` installs into
+  `%LOCALAPPDATA%\Programs\switchscribe` with `PrivilegesRequired=lowest`: no admin rights
+  and no UAC prompt, which matters on locked-down work laptops and lets the in-app updater
+  run the next installer silently. MSIX was rejected: its container virtualizes
+  `%APPDATA%` and the registry (the data folder, the `HKCU` URL scheme and Run entry), it
+  needs a signed package even to sideload, and process loopback capture plus spawning the
+  user's coding CLI from inside the package is untested ground. WiX/MSI was rejected as
+  heavier to author for no gain here: per-user MSIs are awkward, and we need no Group
+  Policy deployment.
+- **One stable `AppId`** (`131DB58A-...`) ties upgrades and the uninstaller together; it
+  never changes.
+- **Silent updates:** the app downloads `switchscribe-setup-<version>-x64.exe`, runs it
+  with `update::INSTALLER_ARGS` (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+  /CLOSEAPPLICATIONS`) and quits; `CloseApplications=yes` closes anything still holding
+  the files, and a silent install starts the new version again (`[Run]` with
+  `Check: WizardSilent`).
+- **Signing is optional in CI.** A PFX (`WINDOWS_CERT_PFX`) or Azure Trusted Signing signs
+  the exe and then the installer, with RFC 3161 timestamps. Without either, the workflow
+  still publishes an unsigned build with a warning annotation, so releases are never
+  blocked on a certificate; SmartScreen will warn those users. The embedded uninstaller is
+  not signed yet (Inno's `SignTool=` setting would do it; follow-up).
+- **The `.sha256` sidecar is an integrity check, not a trust anchor.** It comes from the
+  same release as the installer, so it catches truncated or corrupted downloads (and a
+  wrong asset), but anyone who can replace the installer on the release can replace its
+  hash too. The real trust anchor is the Authenticode signature on the installer.
+  Follow-up: verify it before running the update (`WinVerifyTrust`, and check the signer
+  matches the running exe's signer), and refuse unsigned updates once releases are
+  signed. `update::download` already refuses a release without a hash.
+- **Update checks use the GitHub API's `releases/latest`,** which skips drafts and
+  prereleases; `update::pick` also skips them and any tag that is not a plain
+  `vX.Y.Z`, and compares versions with semver precedence (no `semver` crate for one
+  comparison). The unauthenticated API allows 60 requests an hour per IP; a 403/429 is
+  reported as "try again later", so check at most a few times a day.
+- **The tag must match `[workspace.package] version`,** checked by the workflow, so the
+  running build's `CARGO_PKG_VERSION` is what the update check compares against.
+- **Uninstall keeps the data folder.** `%APPDATA%\switchscribe` (recordings, transcripts,
+  voiceprints, models, settings) is never deleted by the uninstaller; reinstalling must
+  not lose meetings. Only the program files, the shortcut, the `switchscribe://` key and
+  the Run value go.

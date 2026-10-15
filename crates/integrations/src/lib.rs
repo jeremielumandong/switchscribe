@@ -1,5 +1,6 @@
 //! Integrations (M5): the meeting's calendar event (Microsoft Graph, or a published ICS
-//! calendar as the fallback), Jira issues from action items, and exports.
+//! calendar as the fallback), Jira issues from action items, and exports; and (M6) update
+//! checks against GitHub Releases.
 //!
 //! Network calls are blocking (`ureq`); the app runs them on worker threads, never on
 //! the UI thread. Request bodies and URLs are built by pure functions so tests cover
@@ -9,6 +10,7 @@ pub mod calendar;
 pub mod export;
 mod http;
 pub mod jira;
+pub mod update;
 
 use serde::{Deserialize, Serialize};
 
@@ -48,6 +50,9 @@ pub enum Error {
     /// An export could not be written.
     #[error("export: {0}")]
     Export(String),
+    /// An update could not be downloaded or verified; the message is written for the user.
+    #[error("update: {0}")]
+    Update(String),
 }
 
 /// Integrations result.
