@@ -14,6 +14,7 @@ mod demo;
 mod detection;
 mod format;
 mod instance;
+mod integrations_view;
 mod live_view;
 mod meeting_view;
 mod mini_recorder;

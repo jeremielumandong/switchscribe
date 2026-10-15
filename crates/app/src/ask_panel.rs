@@ -50,6 +50,8 @@ pub enum AskEvent {
     Ask(String),
     /// An approved change was applied; summaries should be read again.
     Changed,
+    /// The user approved a Jira issue the agent proposed (the tool's JSON arguments).
+    CreateJira(String),
 }
 
 /// What a question needs to run.
@@ -272,6 +274,22 @@ impl AskPanel {
             return;
         };
         let (action, _, _) = self.pending.remove(i);
+        if approve && action.tool == "create_jira_issue" {
+            // The workspace has the Jira connection; the row is dropped here.
+            cx.emit(AskEvent::CreateJira(action.payload.clone()));
+            let store = self.store.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    if let Ok(s) = store.lock()
+                        && let Err(e) = s.remove_pending(action.id)
+                    {
+                        tracing::warn!(error = %e, "could not drop the pending change");
+                    }
+                })
+                .detach();
+            cx.notify();
+            return;
+        }
         let store = self.store.clone();
         let task = cx.background_executor().spawn(async move {
             let mut s = store
@@ -308,6 +326,17 @@ impl AskPanel {
             });
         })
         .detach();
+        cx.notify();
+    }
+
+    /// Add a line from switchscribe itself (the outcome of an approved change).
+    pub fn say(&mut self, text: String, failed: bool, cx: &mut Context<Self>) {
+        self.messages.push(Message {
+            from_user: false,
+            text: text.into(),
+            cites: Vec::new(),
+            failed,
+        });
         cx.notify();
     }
 

@@ -52,13 +52,14 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub const MCP_SERVER_NAME: &str = "switchscribe";
 
 /// The MCP tools the server exposes (`export_meeting` arrives with exports in M5).
-pub const MCP_TOOLS: [&str; 7] = [
+pub const MCP_TOOLS: [&str; 8] = [
     "list_meetings",
     "get_transcript",
     "get_summary",
     "search_meetings",
     "get_action_items",
     "update_summary",
+    "export_meeting",
     "create_jira_issue",
 ];
 

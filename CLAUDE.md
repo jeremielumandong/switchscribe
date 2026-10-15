@@ -32,7 +32,8 @@ cargo test --workspace
 ## Workspace layout
 
 Dependency direction: `app → everything`; `pipeline, agent, integrations → store`;
-`pipeline → capture` (decoding the tracks).
+`pipeline → capture` (decoding the tracks); `agent → integrations` (the MCP
+`export_meeting` tool).
 Nothing depends on `app`.
 
 | Crate | Job |
@@ -98,6 +99,11 @@ Nothing depends on `app`.
 - Tests that need real speaker models are skipped unless `SWITCHSCRIBE_TEST_MODELS`
   points at a folder with `pyannote-segmentation-3.0.onnx`,
   `nemo_en_titanet_small.onnx` and sherpa-onnx's `four.wav` test file.
+- `SWITCHSCRIBE_FAKE_MEETING="<title>"` fakes a Teams call a few seconds after launch,
+  so the Record prompt, calendar naming and auto-stop can be tried off Windows (the
+  demo's calendar has an event for "Cerberus rollout sync").
+- One switchscribe runs per data folder: a second launch hands over to the first through
+  `instance.port` and exits. Give each test run its own `SWITCHSCRIBE_DATA`.
 - `SWITCHSCRIBE_TEST_CLI=claude` (or `codex`, `gemini`) runs the agent test that
   summarizes through the real, signed-in CLI; skipped otherwise.
 - `switchscribe mcp [--ask] [--demo]` is the MCP server on stdio: stdout carries only

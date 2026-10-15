@@ -149,16 +149,10 @@ fn header(
                 cx.listener(move |ws, _, _, cx| ws.queue_summary(id.clone(), cx))
             }),
         )
-        .child(
-            ui::button("jira", "Send to Jira", Kind::Secondary, p).tooltip(|w, cx| {
-                gpui_kit::component::tooltip::Tooltip::new("Jira arrives in M5").build(w, cx)
-            }),
-        )
-        .child(
-            ui::button("export", "Export ▾", Kind::Primary, p).tooltip(|w, cx| {
-                gpui_kit::component::tooltip::Tooltip::new("Exports arrive in M5").build(w, cx)
-            }),
-        );
+        .child(crate::integrations_view::meeting_jira_button(
+            ws, &m.id, p, cx,
+        ))
+        .child(crate::integrations_view::export_button(ws, p, cx));
     let tabs = div().flex().gap(px(2.)).mt(rpx(14.)).children(
         [
             (Tab::Summary, "Summary", String::new()),

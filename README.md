@@ -8,12 +8,15 @@ items that your coding CLI (Claude Code, Codex, Gemini CLI) can query. It is a s
 [switchhead](https://github.com/jeremielumandong/switchhead) and Switchyard and shares
 their GPUI stack and design system.
 
-> Early development. **M0 (skeleton)** through **M4 (agent)** are in: the app shell,
-> the SQLite store, recording Teams plus your mic to two Opus tracks with a live view, a
-> floating mini recorder and a tray icon, on-device Whisper transcription after the
-> call, an audio player synced to the transcript, speaker identification with a
-> voiceprint library, summaries and action items written by your coding CLI, the Ask
-> panel and an MCP server. Calendar, Jira and exports arrive in M5. See
+> Early development. **M0 (skeleton)** through **M5 (detection and integrations)** are
+> in: the app shell, the SQLite store, recording Teams plus your mic to two Opus tracks
+> with a live view, a floating mini recorder and a tray icon, on-device Whisper
+> transcription after the call, an audio player synced to the transcript, speaker
+> identification with a voiceprint library, summaries and action items written by your
+> coding CLI, the Ask panel and an MCP server, a Record prompt when a Teams call starts,
+> meeting names and invitees from your Outlook calendar, action items sent to Jira, and
+> Markdown, Word, SRT, VTT and JSON exports. Live captions, onboarding and the installer
+> arrive in M6. See
 > [`PLAN.md`](PLAN.md) and the full [build plan](docs/BUILD-PLAN.md).
 
 ![The demo data: a meeting's summary with the Ask panel open](docs/screenshots/demo-summary.png)
@@ -25,6 +28,10 @@ their GPUI stack and design system.
 ![Naming a speaker: clips, voice-matched suggestions and a name field](docs/screenshots/name-speaker.png)
 
 ![The Ask panel: an answer with moments, and a change waiting for approval](docs/screenshots/ask-panel.png)
+
+![A Teams call detected: the Record prompt](docs/screenshots/detect-prompt.png)
+
+![Action items picked for Jira](docs/screenshots/action-items-jira.png)
 
 ## Run it
 
@@ -48,6 +55,7 @@ downloads must stay next to the executable.
 | `SWITCHSCRIBE_DATA` | Data folder (default `%APPDATA%\switchscribe`, or the platform data dir) |
 | `SWITCHSCRIBE_DEMO=1` | Same as `--demo` |
 | `SWITCHSCRIBE_FAKE_AUDIO=1` | Record two synthetic voices instead of the devices (any OS; the demo always does) |
+| `SWITCHSCRIBE_FAKE_MEETING=<title>` | Pretend a Teams call named `<title>` starts a few seconds after launch (any OS) |
 | `SWITCHSCRIBE_ZOOM` | UI zoom, `0.7`–`2.0` |
 | `SWITCHSCRIBE_LOG` | Log filter, e.g. `debug` |
 
@@ -64,6 +72,22 @@ claude mcp add switchscribe -- "<path to switchscribe>" mcp
 
 `switchscribe mcp --ask` makes every write (summary edits, Jira issues) wait for your
 approval in the app.
+
+## Calendar and Jira
+
+Settings → Integrations connects both; neither is needed to record.
+
+- **Outlook calendar** names meetings and suggests invitees when naming speakers. Either
+  register an app in Microsoft Entra ID (public client flows on, delegated
+  `Calendars.Read`), paste its client ID and sign in with the device code shown, or, if
+  your tenant blocks that, publish your calendar from Outlook (Settings → Calendar →
+  Shared calendars → Publish) and paste the ICS link.
+- **Jira Cloud** takes your site, email, an API token from id.atlassian.com and a
+  project key. Send one action item, tick several on the Action items screen, or approve
+  an issue the agent proposes. Each issue quotes its transcript line and links back to
+  the moment with `switchscribe://meeting/<id>?t=<seconds>`.
+
+The token and the Microsoft sign-in are stored sealed with Windows DPAPI.
 
 ## Layout
 
@@ -85,9 +109,10 @@ docs/            build plan, decisions, the UI prototype
 Everything stays on your machine: one folder per meeting under the data folder's
 `meetings/` (`mic.opus`, `remote.opus`, `capture.json`, `notes.md`, `transcript.json`,
 `speakers.json`), a SQLite index (`switchscribe.db`, with voiceprints sealed by Windows
-DPAPI) and `settings.json`. The only thing that
-ever leaves is transcript text your chosen CLI sends to its model for summaries and
-answers (a CLI running a local model keeps even that here).
+DPAPI) and `settings.json`. Audio, transcripts and voiceprints never leave. What does:
+transcript text your chosen CLI sends to its model for summaries and answers (a CLI
+running a local model keeps even that here), the action items you send to Jira with
+their quoted line, and calendar requests to Microsoft or your ICS link.
 
 ## License
 

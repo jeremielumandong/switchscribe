@@ -131,6 +131,8 @@ pub struct Workspace {
     pub(crate) detect: crate::detection::Detect,
     /// Requests from later launches.
     listener: Option<crate::instance::Listener>,
+    /// Exports, Jira and the calendar.
+    pub(crate) integ: crate::integrations_view::Integrations,
     ask: Entity<AskPanel>,
     ask_open: bool,
     search_input: Entity<InputState>,
@@ -173,6 +175,7 @@ impl Workspace {
             cx.subscribe_in(&ask, window, |this, _, ev: &AskEvent, _, cx| match ev {
                 AskEvent::Cite(meeting, at) => this.open_moment(meeting, *at, cx),
                 AskEvent::Ask(q) => this.answer(q.clone(), cx),
+                AskEvent::CreateJira(payload) => this.create_proposed_issue(payload.clone(), cx),
                 AskEvent::Changed => {
                     this.load_summary(cx);
                     this.load_all_actions(cx);
@@ -195,6 +198,8 @@ impl Workspace {
             Some(m) => Screen::Meeting(m.id.clone()),
             None => Screen::Empty,
         };
+        let integ =
+            crate::integrations_view::Integrations::new(&s.settings.integrations, window, cx);
         let mut this = Self {
             paths: s.paths,
             settings: s.settings,
@@ -216,6 +221,7 @@ impl Workspace {
             agent: Agent::default(),
             detect: Default::default(),
             listener: s.listener,
+            integ,
             ask,
             ask_open,
             search_input,
@@ -245,6 +251,7 @@ impl Workspace {
         this.load_all_actions(cx);
         this.detect_cli(cx);
         this.sync_detection(cx);
+        this.load_integrations(cx);
         this.handle_request(s.request, window, cx);
         this.poll_instance(window, cx);
         this.load_notes(cx);
@@ -308,6 +315,11 @@ impl Workspace {
             }
         })
         .detach();
+    }
+
+    /// A line in the Ask panel from switchscribe itself.
+    pub(crate) fn ask_say(&mut self, text: String, failed: bool, cx: &mut Context<Self>) {
+        self.ask.update(cx, |panel, cx| panel.say(text, failed, cx));
     }
 
     /// The selected meeting.
@@ -610,10 +622,13 @@ impl Workspace {
         };
         let now = Local::now();
         let id = recording::meeting_id(now);
+        let event = (!test).then(|| self.current_event()).flatten();
         let title = if test {
             "Test recording".to_owned()
         } else {
-            title.unwrap_or_else(|| recording::default_title(now))
+            title
+                .or_else(|| event.as_ref().map(|e| e.subject.clone()))
+                .unwrap_or_else(|| recording::default_title(now))
         };
         let dir = self.meeting_dir(&id);
         let me = self.people.iter().find(|p| p.is_me).cloned();
@@ -637,6 +652,9 @@ impl Workspace {
                     Ok(mut s) => {
                         if let Err(e) = s.insert_meeting(&row) {
                             tracing::warn!(error = %e, "could not add the meeting to the index");
+                        }
+                        if let Some(event) = &event {
+                            crate::integrations_view::attach_event(&s, &row.id, event);
                         }
                     }
                     Err(_) => tracing::warn!("the index lock is poisoned"),
@@ -1415,6 +1433,9 @@ impl Workspace {
             )));
         }
         banners.extend(self.banners.iter().cloned());
+        let own = self.banners.len();
+        let offset = banners.len() - own;
+        let notice = crate::integrations_view::notice_strip(self, p, cx);
         div()
             .flex_1()
             .min_w(rpx(480.))
@@ -1448,7 +1469,7 @@ impl Workspace {
                             .child("!"),
                     )
                     .child(div().flex_1().min_w_0().child(b.text))
-                    .when_some(b.action, |d, (label, screen)| {
+                    .when_some(b.action.clone(), |d, (label, screen)| {
                         d.child(
                             div()
                                 .id(("banner-action", i))
@@ -1461,7 +1482,24 @@ impl Workspace {
                                 .child(label),
                         )
                     })
+                    .when(i >= offset, |d| {
+                        let k = i - offset;
+                        d.child(
+                            div()
+                                .id(("banner-x", i))
+                                .text_color(p.warn_fg)
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if k < this.banners.len() {
+                                        this.banners.remove(k);
+                                    }
+                                    cx.notify();
+                                }))
+                                .child("✕"),
+                        )
+                    })
             }))
+            .children(notice)
             .child(content)
             .into_any_element()
     }
@@ -1842,6 +1880,7 @@ impl Workspace {
                     .child(ui::section_label("Agent", p.fg3).mt(rpx(18.)).mb(rpx(4.)))
                     .child(agent_view::settings_agent(self, p, cx))
                     .child(crate::detection::settings_detection(self, p, cx))
+                    .child(crate::integrations_view::settings_integrations(self, p, cx))
                     .child(
                         ui::section_label("Everything else", p.fg3)
                             .mt(rpx(18.))

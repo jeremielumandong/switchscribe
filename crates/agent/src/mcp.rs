@@ -5,6 +5,8 @@
 use std::io::{BufRead, Write};
 
 use serde_json::{Value, json};
+use switchscribe_integrations::ExportFormat;
+use switchscribe_integrations::export::{MeetingExport, export};
 use switchscribe_store::{Bullet, Meeting, NewActionItem, SearchFilter, Store, Summary};
 
 use crate::summarize::{clock, match_person, parse_clock};
@@ -162,6 +164,14 @@ fn tools() -> Value {
                     "text": { "type": "string" }, "owner": { "type": "string" },
                     "due": { "type": "string" }, "at": { "type": "string" }
                 }, "required": ["text", "at"] } }
+            }, "required": ["meeting_id"] }
+        },
+        {
+            "name": "export_meeting",
+            "description": "A meeting as Markdown (summary, decisions, action items, transcript), SRT or VTT captions, or JSON.",
+            "inputSchema": { "type": "object", "properties": {
+                "meeting_id": { "type": "string" },
+                "format": { "type": "string", "enum": ["markdown", "srt", "vtt", "json"], "default": "markdown" }
             }, "required": ["meeting_id"] }
         },
         {
@@ -347,6 +357,35 @@ fn call(store: &mut Store, mode: Mode, name: &str, args: &Value) -> Result<Value
                 }
             }
         }
+        "export_meeting" => {
+            let id = required(args, "meeting_id")?;
+            let format = match str_arg(args, "format").unwrap_or("markdown") {
+                "markdown" | "md" => ExportFormat::Markdown,
+                "srt" => ExportFormat::Srt,
+                "vtt" => ExportFormat::Vtt,
+                "json" => ExportFormat::Json,
+                f => return Err(Error::Tool(format!("unknown format {f}"))),
+            };
+            let m = meeting(store, id)?;
+            let segments = store.segments(id)?;
+            let people = store.people()?;
+            let summary = store.summary(id)?;
+            let items = store.action_items(Some(id))?;
+            // Notes live in the meeting folder, which the server does not read.
+            let bytes = export(
+                &MeetingExport {
+                    meeting: &m,
+                    segments: &segments,
+                    people: &people,
+                    summary: summary.as_ref(),
+                    action_items: &items,
+                    notes: "",
+                },
+                format,
+            )
+            .map_err(|e| Error::Tool(e.to_string()))?;
+            Ok(Value::String(String::from_utf8_lossy(&bytes).into_owned()))
+        }
         "create_jira_issue" => {
             let id = required(args, "meeting_id")?;
             required(args, "summary")?;
@@ -445,10 +484,10 @@ pub fn apply_pending(
             apply_update_summary(store, &args)?;
             Ok("Done: the summary is updated.".into())
         }
-        "create_jira_issue" => Ok(
-            "Jira is not connected yet (it arrives with integrations), so nothing was created."
-                .into(),
-        ),
+        // The app creates approved issues itself (it holds the Jira token).
+        "create_jira_issue" => Err(Error::Tool(
+            "Jira issues are created by the switchscribe app".into(),
+        )),
         t => Err(Error::Tool(format!("switchscribe cannot apply {t}"))),
     }
 }
@@ -656,6 +695,27 @@ mod tests {
         assert!(hits.contains("\"at\": \"00:31\""));
         let (err, is_error) = tool(&mut s, Mode::Direct, "get_transcript", json!({}));
         assert!(is_error && err.contains("meeting_id"));
+        let (md, _) = tool(
+            &mut s,
+            Mode::Direct,
+            "export_meeting",
+            json!({ "meeting_id": "aks" }),
+        );
+        assert!(md.starts_with("# AKS planning") && md.contains("Two of three pools"));
+        let (srt, _) = tool(
+            &mut s,
+            Mode::Direct,
+            "export_meeting",
+            json!({ "meeting_id": "aks", "format": "srt" }),
+        );
+        assert!(srt.contains("00:00:31,000 --> 00:00:35,000"));
+        let (_, is_error) = tool(
+            &mut s,
+            Mode::Direct,
+            "export_meeting",
+            json!({ "meeting_id": "aks", "format": "docx" }),
+        );
+        assert!(is_error);
     }
 
     #[test]

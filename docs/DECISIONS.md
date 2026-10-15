@@ -236,3 +236,38 @@ Non-obvious calls, newest last. Append when you make one.
   XML 1.0 cannot hold are dropped.
 - **The JSON export is versioned** (`"format": "switchscribe.meeting/1"`); fields are only
   added. Times are `*_ms` from the meeting start plus `at` as `mm:ss`.
+
+## M5 detection and integrations (app)
+
+- **A call is a Teams capture session.** New Teams opens a mic stream when a call starts
+  and keeps it open while muted, so an active WASAPI *capture* session owned by a
+  process in the Teams tree (`ms-teams.exe` and its WebView2 children) is the call.
+  Render sessions were rejected: Teams plays notification sounds outside calls. Window
+  titles (`EnumWindows`) only name it: "<meeting> | Microsoft Teams", with Teams' own
+  views (Chat, Calendar, ...) ignored.
+- **Hysteresis:** a call counts after two polls (2 s apart) and ends after four missing
+  polls, so a headset switch does not split a meeting.
+- **Auto-stop** fires 30 s after the call ends, or when the Teams track has been under
+  2% level for the set minutes (default 3, Never possible). Recordings started from
+  Settings' test button never stop on their own. The reason shows in the notice strip.
+- **"Always record" is per title,** matched exactly (case-insensitive); a title is the
+  calendar subject when one matches, else the window's meeting name.
+- **Single instance over loopback TCP,** not a named pipe or mutex: one portable piece of
+  code, and the same channel carries `switchscribe://` links. `instance.port` holds the
+  port and a random key; requests without the key are dropped. The scheme is registered
+  per user under `HKCU\Software\Classes` with `reg.exe` (through `process::command`, no
+  window) at each start, so moving the exe keeps links working.
+- **Notices are one strip above the content,** replaced by the next one: export results
+  (with Show in folder), Jira results (with View issue) and setup hints. Warnings are
+  amber; nothing here is red.
+- **The calendar refreshes every 10 minutes** on the background executor (and when its
+  settings change). Invitees in the library become the meeting's attendees; the rest are
+  offered on the Name-a-speaker card as dashed "invited" chips, and naming a speaker with
+  one adds them like a typed name.
+- **Exports go through the platform save dialog;** where there is none (Linux without an
+  XDG portal) they land in Downloads, else `<data>/exports`.
+- **`export_meeting` over MCP** returns Markdown, SRT, VTT or JSON as text (Word is
+  binary) and leaves out the user's notes, which live in the meeting folder the server
+  does not read. This is the one reason `agent` depends on `integrations`.
+- **Approved `create_jira_issue` proposals are created by the app,** which holds the Jira
+  token; `mcp::apply_pending` refuses them.

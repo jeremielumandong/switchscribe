@@ -16,7 +16,6 @@ use switchscribe_capture::Track;
 use switchscribe_capture::detect::{Detection, TeamsCall, Watcher, system_probe};
 
 use crate::appearance::{rpx, ts};
-use crate::recording::Banner;
 use crate::theme::{Palette, SANS, palette};
 use crate::ui::{self, Kind};
 use crate::workspace::Workspace;
@@ -109,7 +108,7 @@ impl Workspace {
 
     /// The calendar's name for a meeting happening now.
     pub(crate) fn calendar_title(&self) -> Option<String> {
-        None
+        self.current_event().map(|e| e.subject)
     }
 
     fn poll_detection(&mut self, cx: &mut Context<Self>) {
@@ -253,7 +252,7 @@ impl Workspace {
             tracing::info!(%why, "auto-stop");
             self.detect.call_ended = None;
             self.stop_recording(cx);
-            self.banners.push(Banner::plain(why));
+            self.integ.notice = Some(crate::integrations_view::Notice::plain(why));
             cx.notify();
         }
     }

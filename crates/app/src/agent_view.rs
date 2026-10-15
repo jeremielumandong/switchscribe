@@ -601,6 +601,7 @@ pub fn actions_tab(
                     ),
                 )
                 .child(status_chip(a.id, a.status, p, cx))
+                .child(crate::integrations_view::item_jira_button(ws, a, p, cx))
         }))
         .into_any_element()
 }
@@ -620,10 +621,12 @@ pub fn action_items_screen(ws: &Workspace, p: &Palette, cx: &mut Context<Workspa
         .iter()
         .filter(|i| show_done || i.status != ActionStatus::Done)
         .collect();
-    const OWNER: f32 = 130.;
-    const DUE: f32 = 80.;
-    const SOURCE: f32 = 240.;
-    const STATUS: f32 = 100.;
+    const OWNER: f32 = 120.;
+    const DUE: f32 = 56.;
+    const SOURCE: f32 = 182.;
+    const STATUS: f32 = 92.;
+    const CHECK: f32 = 28.;
+    const JIRA: f32 = 104.;
     let cell = |w: Option<f32>| {
         let d = div().px(rpx(4.)).flex().items_center();
         match w {
@@ -639,11 +642,13 @@ pub fn action_items_screen(ws: &Workspace, p: &Palette, cx: &mut Context<Workspa
         .border_color(p.bd)
         .text_size(ts::SMALL)
         .text_color(p.fg3)
+        .child(cell(Some(CHECK)))
         .child(cell(None).child("Item"))
         .child(cell(Some(OWNER)).child("Owner"))
         .child(cell(Some(DUE)).child("Due"))
         .child(cell(Some(SOURCE)).child("Source"))
-        .child(cell(Some(STATUS)).child("Status"));
+        .child(cell(Some(STATUS)).child("Status"))
+        .child(cell(Some(JIRA)));
     let rows: Vec<gpui_kit::Div> = items
         .into_iter()
         .enumerate()
@@ -652,11 +657,26 @@ pub fn action_items_screen(ws: &Workspace, p: &Palette, cx: &mut Context<Workspa
             let meeting_id = a.meeting_id.clone();
             let who = owner(ws, a, p);
             let done = a.status == ActionStatus::Done;
+            let (id, sendable) = (a.id, a.jira_key.is_none() && !done);
+            let checked = ws.integ.checked.contains(&a.id);
             div()
                 .w_full()
                 .flex()
                 .py(rpx(6.))
                 .min_h(rpx(38.))
+                .child(
+                    cell(Some(CHECK)).child(
+                        div()
+                            .id(("check", id as usize))
+                            .when(sendable, |d| {
+                                d.cursor_pointer().on_click(
+                                    cx.listener(move |ws, _, _, cx| ws.toggle_checked(id, cx)),
+                                )
+                            })
+                            .when(!sendable, |d| d.opacity(0.3))
+                            .child(ui::checkbox(checked && sendable, p)),
+                    ),
+                )
                 .border_b_1()
                 .border_color(p.elev)
                 .child(
@@ -697,6 +717,10 @@ pub fn action_items_screen(ws: &Workspace, p: &Palette, cx: &mut Context<Workspa
                         )),
                 )
                 .child(cell(Some(STATUS)).child(status_chip(a.id, a.status, p, cx)))
+                .child(
+                    cell(Some(JIRA))
+                        .child(crate::integrations_view::item_jira_button(ws, a, p, cx)),
+                )
         })
         .collect();
     div()
@@ -712,6 +736,17 @@ pub fn action_items_screen(ws: &Workspace, p: &Palette, cx: &mut Context<Workspa
                 .child(div().flex_1().child(screen_title("Action items", None, p)))
                 .child(ui::mono(format!("{open} open"), ts::BODY, p.fg3))
                 .child(div().w(rpx(12.)))
+                .child({
+                    let ids: Vec<i64> = ws.integ.checked.iter().copied().collect();
+                    let label = match ids.len() {
+                        0 => "Send to Jira".to_owned(),
+                        n => format!("Send {n} to Jira"),
+                    };
+                    ui::button("bulk-jira", label, Kind::Primary, p)
+                        .when(ids.is_empty(), |b| b.opacity(0.5))
+                        .on_click(cx.listener(move |ws, _, _, cx| ws.send_to_jira(ids.clone(), cx)))
+                })
+                .child(div().w(rpx(6.)))
                 .child(
                     ui::button(
                         "show-done",
