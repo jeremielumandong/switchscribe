@@ -36,6 +36,8 @@ pub struct Session {
     pub test: bool,
     /// When the Teams track last had sound.
     pub quiet_since: std::time::Instant,
+    /// Live captions, when they are on.
+    pub captions: Option<crate::captions::Live>,
     pub(crate) _tick: Task<()>,
     pub(crate) _notes_changed: Subscription,
 }

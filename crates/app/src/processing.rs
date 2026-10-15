@@ -463,6 +463,27 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Turn live captions on or off, for the running recording too.
+    pub(crate) fn toggle_live_captions(&mut self, cx: &mut Context<Self>) {
+        self.settings.models.live_captions = !self.settings.models.live_captions;
+        self.save_settings(cx);
+        let started = self
+            .recording
+            .as_ref()
+            .filter(|s| s.captions.is_none())
+            .and_then(|s| s.recorder.as_ref())
+            .map(|r| self.start_captions(r));
+        if let Some(s) = self.recording.as_mut() {
+            match started {
+                Some(Ok(live)) => s.captions = live,
+                Some(Err(banner)) => self.banners.push(banner),
+                None if !self.settings.models.live_captions => s.captions = None,
+                None => {}
+            }
+        }
+        cx.notify();
+    }
+
     /// Check running jobs, and keep checking while any run.
     fn poll_jobs(&mut self, cx: &mut Context<Self>) {
         if self.jobs.polling {
@@ -785,6 +806,32 @@ impl Workspace {
                 ui::button("gpu", if gpu { "On" } else { "Off" }, Kind::Outline, p)
                     .on_click(cx.listener(|ws, _, _, cx| ws.toggle_gpu(cx))),
             );
+        let captions = self.settings.models.live_captions;
+        let live_note = match crate::captions::live_model(&self.jobs.installed, gpu) {
+            Some(m) => format!(
+                "Shows what is said while recording, from the {} model. The transcript after the call replaces them.",
+                m.label
+            ),
+            None => "Shows what is said while recording. Needs the Base or Small model.".into(),
+        };
+        let captions_row = div()
+            .flex()
+            .items_center()
+            .gap(rpx(12.))
+            .py(rpx(8.))
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(div().text_color(p.fg).child("Live captions"))
+                    .child(div().text_size(ts::BODY).text_color(p.fg3).child(live_note)),
+            )
+            .child(
+                ui::button("live-captions", if captions { "On" } else { "Off" }, Kind::Outline, p)
+                    .on_click(cx.listener(|ws, _, _, cx| ws.toggle_live_captions(cx))),
+            );
         div()
             .flex()
             .flex_col()
@@ -795,6 +842,7 @@ impl Workspace {
             .children(rows)
             .child(speaker_row)
             .child(gpu_row)
+            .child(captions_row)
             .into_any_element()
     }
 }

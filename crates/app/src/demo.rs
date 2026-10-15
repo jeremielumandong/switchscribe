@@ -211,6 +211,11 @@ fn at(today: NaiveDate, days_ago: u64, (h, m): (u32, u32)) -> i64 {
 }
 
 /// An in-memory store holding the demo meetings, dated relative to `today`.
+/// Lines the demo's live captions read back.
+pub fn caption_lines() -> Vec<&'static str> {
+    SEGMENTS.iter().map(|s| s.2).collect()
+}
+
 pub fn store(today: NaiveDate) -> switchscribe_store::Result<Store> {
     let mut store = Store::open_in_memory()?;
     let mut ids = Vec::new();

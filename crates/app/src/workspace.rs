@@ -695,6 +695,13 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let monitor = recorder.monitor();
+        let captions = match self.start_captions(&recorder) {
+            Ok(c) => c,
+            Err(banner) => {
+                self.banners.push(banner);
+                None
+            }
+        };
         let notes =
             cx.new(|cx| TextareaState::new(window, cx).placeholder("Notes stay on this machine."));
         let notes_changed = cx.subscribe(&notes, |this, _, ev: &InputEvent, cx| {
@@ -736,6 +743,7 @@ impl Workspace {
             notes_generation: 0,
             test,
             quiet_since: std::time::Instant::now(),
+            captions,
             _tick: tick,
             _notes_changed: notes_changed,
         });
@@ -772,6 +780,7 @@ impl Workspace {
             }
         }
         let (id, secs, paused) = (s.meeting_id.clone(), s.elapsed_secs(), s.paused());
+        self.poll_captions(cx);
         if let Some(m) = self.meetings.iter_mut().find(|m| m.id == id) {
             m.duration_secs = secs as u32;
         }
@@ -1735,7 +1744,6 @@ impl Workspace {
                 .child(div().flex_1().min_w_0().text_color(p.text).child(value))
         };
         let text = |t: String| div().child(t).into_any_element();
-        let on = |b: bool| text(if b { "On" } else { "Off" }.to_owned());
 
         // Audio: the capture mode as a two-way toggle, the microphone as a radio list.
         let mode = s.audio.capture_mode;
@@ -1898,7 +1906,6 @@ impl Workspace {
                         "Settings file",
                         text(self.paths.settings_file().display().to_string()),
                     ))
-                    .child(row("Live captions", on(s.models.live_captions)))
                     .child(row(
                         "Keep audio",
                         text(

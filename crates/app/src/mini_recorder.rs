@@ -1,6 +1,8 @@
 //! The mini recorder: a borderless, always-on-top pill (340 × 56) shown while recording,
 //! with the pulsing dot, elapsed time, "You" / "Teams" level meters, and Bookmark, Quick
-//! note, Pause and Stop. Drag it anywhere.
+//! note, Pause and Stop. Drag it anywhere. Hovering grows it to show the meeting's title
+//! and the latest live caption under the controls (below rather than above, as the
+//! prototype has it, so the buttons stay put under the pointer).
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -19,10 +21,13 @@ use crate::workspace::Workspace;
 /// The pill's size, logical pixels.
 const WIDTH: f32 = 340.;
 const HEIGHT: f32 = 56.;
+/// Its height while hovered.
+const EXPANDED: f32 = 100.;
 
 /// The mini recorder's view. It reads everything from the workspace's session.
 pub struct MiniRecorder {
     ws: WeakEntity<Workspace>,
+    hovered: bool,
 }
 
 /// Open the mini recorder near the bottom center of the primary display.
@@ -50,7 +55,7 @@ pub fn open(ws: WeakEntity<Workspace>, cx: &mut App) -> Option<AnyWindowHandle> 
         app_id: Some("switchscribe".into()),
         ..Default::default()
     };
-    match gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| MiniRecorder { ws })) {
+    match gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| MiniRecorder { ws, hovered: false })) {
         Ok((handle, _)) => Some(handle),
         Err(e) => {
             tracing::warn!(error = %e, "could not open the mini recorder");
@@ -88,15 +93,30 @@ impl Render for MiniRecorder {
         let state = self.ws.upgrade().and_then(|ws| {
             let ws = ws.read(cx);
             ws.recording.as_ref().map(|s| {
+                let caption = s.captions.as_ref().and_then(|c| c.last()).map(|b| {
+                    let who = match b.track {
+                        Track::Mic => ws
+                            .people
+                            .iter()
+                            .find(|x| x.is_me)
+                            .map_or_else(|| "You".to_owned(), |m| m.name.clone()),
+                        Track::Remote => "Teams".to_owned(),
+                    };
+                    format!("{who}: {}", b.text)
+                });
                 (
                     s.elapsed_secs(),
                     s.pulse(),
                     s.paused(),
                     [s.monitor.level(Track::Mic), s.monitor.level(Track::Remote)],
+                    s.title.clone(),
+                    caption,
                 )
             })
         });
-        let (elapsed, pulse, paused, levels) = state.unwrap_or((0, 0.5, false, [0.0; 2]));
+        let (elapsed, pulse, paused, levels, title, caption) =
+            state.unwrap_or((0, 0.5, false, [0.0; 2], String::new(), None));
+        let expanded = self.hovered;
         let ws = self.ws.clone();
         let call = move |f: fn(&mut Workspace, &mut Context<Workspace>)| {
             let ws = ws.clone();
@@ -138,21 +158,12 @@ impl Render for MiniRecorder {
                     )
             }));
         let pause_bar = || div().w(px(3.)).h(px(11.)).rounded(px(1.)).bg(p.fg_chip);
-        div()
-            .id("mini")
-            .size_full()
+        let row = div()
+            .h(px(HEIGHT - 2.))
+            .flex_none()
             .flex()
             .items_center()
             .gap(rpx(12.))
-            .pl(rpx(18.))
-            .pr(rpx(8.))
-            .rounded(px(28.))
-            .border_1()
-            .border_color(p.pill_bd)
-            .bg(p.pill)
-            .font_family(SANS)
-            .text_color(p.fg)
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
             .child(
                 div()
                     .size(rpx(9.))
@@ -221,7 +232,54 @@ impl Render for MiniRecorder {
                             .on_click(call(Workspace::stop_recording))
                             .child(div().size(px(10.)).rounded(px(1.5)).bg(gpui_kit::white())),
                     ),
-            )
+            );
+        div()
+            .id("mini")
+            .size_full()
+            .flex()
+            .flex_col()
+            .pl(rpx(18.))
+            .pr(rpx(8.))
+            .rounded(px(if expanded { 20. } else { 28. }))
+            .border_1()
+            .border_color(p.pill_bd)
+            .bg(p.pill)
+            .font_family(SANS)
+            .text_color(p.fg)
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
+            .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
+                if this.hovered != *hovered {
+                    this.hovered = *hovered;
+                    let h = if *hovered { EXPANDED } else { HEIGHT };
+                    window.resize(size(px(WIDTH), px(h)));
+                    cx.notify();
+                }
+            }))
+            .child(row)
+            .when(expanded, |d| {
+                d.child(
+                    div()
+                        .pr(rpx(10.))
+                        .pb(rpx(10.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(3.))
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(ts::BODY)
+                                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(ts::BODY)
+                                .text_color(p.fg2)
+                                .child(caption.unwrap_or_else(|| "No live captions".into())),
+                        ),
+                )
+            })
             .when(self.ws.upgrade().is_none(), |d| d.opacity(0.5))
     }
 }

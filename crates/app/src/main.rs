@@ -10,6 +10,7 @@ mod agent_view;
 mod appearance;
 mod ask_panel;
 mod assets;
+mod captions;
 mod demo;
 mod detection;
 mod format;

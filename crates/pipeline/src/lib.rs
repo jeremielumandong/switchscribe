@@ -6,6 +6,7 @@
 
 pub mod identify;
 pub mod job;
+pub mod live;
 pub mod models;
 #[cfg(feature = "sherpa")]
 pub mod sherpa;
@@ -74,6 +75,8 @@ pub struct Options {
     pub prompt: String,
     /// Language code (`en`), or `None` to detect it.
     pub language: Option<String>,
+    /// Favor speed over accuracy (greedy decoding), for live captions.
+    pub fast: bool,
 }
 
 /// An engine's output for one piece of audio.
