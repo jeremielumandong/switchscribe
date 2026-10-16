@@ -89,6 +89,11 @@ Nothing depends on `app`.
 - libopus is built from source (`opusic-sys`), so builds need CMake. Windows-only code
   can be checked from Linux with `rustup target add x86_64-pc-windows-gnu`, the
   `gcc-mingw-w64-x86-64` package and `cargo clippy --target x86_64-pc-windows-gnu`.
+  macOS-only code (`crates/capture/src/macos.rs`) type-checks from Linux with
+  `rustup target add aarch64-apple-darwin` and
+  `cargo clippy -p switchscribe-capture --target aarch64-apple-darwin`, after patching
+  `opusic-sys` (`[patch.crates-io]` in a `--config` file) to a copy without its
+  `build.rs`, since libopus cannot be cross-compiled without the macOS SDK.
 - whisper.cpp (whisper-rs) is built from source with CMake and a C++ compiler, which
   makes a clean build slow. Playback uses `cpal`, which needs `libasound2-dev` on Linux.
   Models download from huggingface.co; `SWITCHSCRIBE_DATA/models` holds them.

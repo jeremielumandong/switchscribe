@@ -3,7 +3,10 @@
 //! On Windows a call shows up as an active audio session on a capture device (the
 //! microphone) owned by Teams or one of its child processes; Teams keeps that stream open
 //! while muted, so it lasts the whole call. The call's window title, when Teams shows a
-//! meeting window, names it. [`Watcher`] polls on its own thread and reports a call only
+//! meeting window, names it. On macOS (14.2 and later) Core Audio reports per process
+//! whether it is capturing, so a call is a Teams process with its input running; the title
+//! is left to the calendar there, since other apps' window titles need the Screen Recording
+//! permission. [`Watcher`] polls on its own thread and reports a call only
 //! once it has been seen twice in a row, and its end only after it has been gone for a
 //! few polls, so a brief device switch does not end a meeting.
 //!
@@ -44,8 +47,8 @@ pub trait Probe: Send {
     fn probe(&mut self) -> Option<TeamsCall>;
 }
 
-/// The probe for this machine: Teams' audio sessions on Windows, a fake call when
-/// `SWITCHSCRIBE_FAKE_MEETING` is set, nothing otherwise.
+/// The probe for this machine: Teams' audio sessions on Windows, its Core Audio process
+/// objects on macOS, a fake call when `SWITCHSCRIBE_FAKE_MEETING` is set, nothing otherwise.
 pub fn system_probe() -> Option<Box<dyn Probe>> {
     if let Ok(title) = std::env::var("SWITCHSCRIBE_FAKE_MEETING") {
         return Some(Box::new(FakeProbe::new(title, Duration::from_secs(4))));
@@ -54,7 +57,11 @@ pub fn system_probe() -> Option<Box<dyn Probe>> {
     {
         Some(Box::new(crate::windows::SessionProbe))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        Some(Box::new(crate::macos::CallProbe))
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         None
     }

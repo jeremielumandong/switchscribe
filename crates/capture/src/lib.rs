@@ -1,12 +1,15 @@
-//! Audio capture: Teams through WASAPI process loopback and the microphone through WASAPI
-//! capture, each written to its own mono Opus track in the meeting folder.
+//! Audio capture: Teams and the microphone, each written to its own mono Opus track in the
+//! meeting folder. Windows captures Teams through WASAPI process loopback, macOS through a
+//! Core Audio process tap; the microphone comes from WASAPI or cpal.
 //!
 //! [`Recorder`] runs a recording; [`Backend::system`] opens the real devices on Windows and
-//! [`Backend::fake`] two synthetic voices anywhere else (tests, `SWITCHSCRIBE_FAKE_AUDIO`).
+//! macOS and [`Backend::fake`] two synthetic voices anywhere (tests, `SWITCHSCRIBE_FAKE_AUDIO`).
 //! [`detect`] watches for Teams calls.
 
 pub mod audio;
 pub mod detect;
+#[cfg(target_os = "macos")]
+mod macos;
 pub mod ogg_opus;
 mod playback;
 mod recorder;
@@ -32,7 +35,7 @@ pub use source::{FakeSource, FakeVoice, OpenFn, Opened, Source};
 pub enum Track {
     /// The user's microphone.
     Mic,
-    /// Teams' output (process loopback, or system loopback as a fallback).
+    /// Teams' output (process loopback or tap, or the whole system as a fallback).
     Remote,
 }
 
@@ -86,14 +89,14 @@ pub enum RemoteMode {
 /// An audio input device.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputDevice {
-    /// The endpoint id, stable across restarts; saved in settings.
+    /// The device id, stable across restarts; saved in settings.
     pub id: String,
-    /// The name Windows shows.
+    /// The name the system shows.
     pub name: String,
 }
 
-/// The microphones Windows reports, default communications device first. Empty where
-/// capture is not supported. Blocks briefly; fine before the window opens, otherwise call
+/// The microphones the system reports, the default (communications) device first. Empty
+/// where capture is not supported. Blocks briefly; fine before the window opens, otherwise call
 /// it off the UI thread.
 pub fn input_devices() -> Vec<InputDevice> {
     #[cfg(windows)]
@@ -108,7 +111,14 @@ pub fn input_devices() -> Vec<InputDevice> {
             Vec::new()
         })
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::input_devices().unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "could not list input devices");
+            Vec::new()
+        })
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         Vec::new()
     }
@@ -122,7 +132,11 @@ impl Backend {
         {
             Ok(windows::backend(mode, mic_device))
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        {
+            Ok(macos::backend(mode, mic_device))
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         {
             let _ = (mode, mic_device);
             Err(Error::Unsupported)
@@ -134,7 +148,7 @@ impl Backend {
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// Audio capture is not implemented on this platform yet.
-    #[error("audio capture needs Windows; Linux capture through PipeWire comes after v1")]
+    #[error("{}", UNSUPPORTED)]
     Unsupported,
     /// A file could not be read or written.
     #[error("{path}: {source}")]
@@ -166,6 +180,14 @@ pub enum Error {
     Device(String),
 }
 
+/// Why [`Error::Unsupported`] happens here, naming this platform.
+#[cfg(target_os = "linux")]
+const UNSUPPORTED: &str =
+    "audio capture is not available on Linux yet (PipeWire capture comes after v1)";
+#[cfg(not(target_os = "linux"))]
+const UNSUPPORTED: &str =
+    "audio capture is not available on this system; switchscribe records on Windows and macOS";
+
 /// Result alias for this crate.
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -186,9 +208,9 @@ mod tests {
         assert_eq!(Track::Remote.meter_label(), "Teams");
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     #[test]
-    fn system_capture_is_windows_only() {
+    fn system_capture_is_windows_and_macos_only() {
         assert!(matches!(
             Backend::system(RemoteMode::TeamsOnly, None),
             Err(Error::Unsupported)

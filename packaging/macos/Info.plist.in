@@ -16,6 +16,8 @@
   <key>LSMinimumSystemVersion</key><string>@MIN_MACOS@</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>@APP_NAME@ records your side of the meeting from your microphone. Audio stays on this Mac.</string>
+  <key>NSAudioCaptureUsageDescription</key><string>@APP_NAME@ records what Teams plays so the meeting can be transcribed on this Mac. Audio never leaves it.</string>
   <key>NSHumanReadableCopyright</key><string>Licensed under MIT</string>
 </dict>
 </plist>

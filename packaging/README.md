@@ -15,9 +15,12 @@ Each package gets a `.sha256` (`<hash>  <file>`), plus a copy under a version-le
 (`switchscribe-windows-x64-setup.exe`, `switchscribe-macos-universal.dmg`,
 `switchscribe-linux-x86_64.AppImage`) for "latest" download links.
 
-Recording (Teams loopback and the microphone) is Windows-only in v1. The macOS and Linux
-builds open, play, transcribe and search existing meetings, and say capture is not
-supported when you try to record.
+Recording works on Windows (Teams process loopback) and macOS 14.2 or later (a Core Audio
+process tap on Teams); the Mac app asks for the microphone and "System Audio Recording"
+permissions the first time it records, using the usage strings in `Info.plist.in`, and is
+signed with `switchscribe.entitlements` (the microphone under the hardened runtime). The
+Linux build opens, plays, transcribes and searches existing meetings, and says capture is
+not available yet when you try to record.
 
 ## Cutting a release
 
