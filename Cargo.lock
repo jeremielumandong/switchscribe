@@ -6702,7 +6702,7 @@ dependencies = [
 
 [[package]]
 name = "switchscribe-agent"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "chrono",
  "serde",
@@ -6716,7 +6716,7 @@ dependencies = [
 
 [[package]]
 name = "switchscribe-app"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6736,7 +6736,7 @@ dependencies = [
 
 [[package]]
 name = "switchscribe-capture"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "block2 0.6.2",
  "cpal",
@@ -6759,7 +6759,7 @@ dependencies = [
 
 [[package]]
 name = "switchscribe-integrations"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -6777,7 +6777,7 @@ dependencies = [
 
 [[package]]
 name = "switchscribe-pipeline"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "bzip2 0.6.1",
  "serde",
@@ -6797,14 +6797,14 @@ dependencies = [
 
 [[package]]
 name = "switchscribe-speakers"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "switchscribe-store"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "chrono",
  "directories",
