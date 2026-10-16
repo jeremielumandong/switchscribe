@@ -486,8 +486,10 @@ mod tests {
     #[test]
     fn pause_skips_time() {
         let dir = tempfile::tempdir().unwrap();
+        let started = Instant::now();
         let rec = Recorder::start(dir.path(), Backend::fake()).unwrap();
         wait(300);
+        let paused = Instant::now();
         rec.set_paused(true);
         let mon = rec.monitor();
         assert!(mon.is_paused());
@@ -495,9 +497,17 @@ mod tests {
         wait(400);
         assert_eq!(mon.elapsed(), at_pause);
         rec.set_paused(false);
+        let pause = paused.elapsed();
         wait(300);
         let done = rec.stop().unwrap();
-        assert!(done.duration_ms < 800, "{}", done.duration_ms);
+        // The recording is the wall time minus the pause (measured, since a loaded CI
+        // runner oversleeps), never the pause included.
+        let unpaused = (started.elapsed() - pause).as_millis() as u64;
+        assert!(
+            done.duration_ms <= unpaused + 50,
+            "{} of {unpaused}",
+            done.duration_ms
+        );
         let mic = done.tracks.iter().find(|t| t.track == Track::Mic).unwrap();
         assert!(mic.duration_ms.abs_diff(done.duration_ms) < 150);
     }
