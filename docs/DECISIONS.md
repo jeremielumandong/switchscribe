@@ -412,3 +412,15 @@ Non-obvious calls, newest last. Append when you make one.
   ad-hoc signed local build asks again after each rebuild.
 - **`Error::Unsupported` names the platform** (Linux: PipeWire after v1); it no longer
   happens on Windows or macOS.
+
+## Finding the coding CLI outside the terminal's PATH (2026-10-16)
+
+- **An app started from the Dock, Finder or a desktop launcher has a minimal `PATH`**
+  (`/usr/bin:/bin:/usr/sbin:/sbin` on macOS), so CLIs from Homebrew, npm, nvm or the
+  per-user installers read as "not found". `process::which` searches our `PATH`, then
+  switchhead's list of common install folders, then the login shell's `PATH`.
+- **The login shell runs `-i -l -c` once, only on a miss** (nvm usually lives in
+  `.zshrc`, Homebrew in `.zprofile`), with markers around the printed `PATH` and a 5 s
+  limit. Not on Windows, where GUI apps get the full user `PATH`.
+- **The CLI runs with the `PATH` from `process::path_for`**: its own folder first, so an
+  npm CLI's `#!/usr/bin/env node` finds the node installed next to it.

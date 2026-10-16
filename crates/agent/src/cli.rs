@@ -36,7 +36,8 @@ pub struct McpServer {
 }
 
 impl Cli {
-    /// The CLI to run: `path` when set, else `kind`'s program found on `PATH`.
+    /// The CLI to run: `path` when set, else `kind`'s program found on `PATH`, in a common
+    /// install folder or on the login shell's `PATH` ([`process::which`]).
     pub fn find(kind: CliKind, path: Option<&Path>) -> Result<Cli> {
         let program = match path {
             Some(p) if p.is_file() => Some(p.to_path_buf()),
@@ -98,7 +99,8 @@ impl Cli {
 
     fn command(&self, workdir: &Path, mcp: Option<&McpServer>, answer: &Path) -> Result<Command> {
         let mut cmd = process::command(&self.program);
-        cmd.current_dir(workdir);
+        cmd.current_dir(workdir)
+            .env("PATH", process::path_for(&self.program));
         match self.kind {
             CliKind::ClaudeCode => {
                 cmd.args(["-p", "--output-format", "text"]);

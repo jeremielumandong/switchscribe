@@ -5,10 +5,11 @@
 //! [`command`], which passes `CREATE_NO_WINDOW`; clippy rejects `Command::new` anywhere
 //! else (see `clippy.toml`).
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -31,8 +32,13 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     Command::new(program)
 }
 
-/// Find `program` on `PATH`. On Windows this also tries the `PATHEXT` extensions, since
-/// npm installs CLIs as `claude.cmd`, which `Command` would not find by its bare name.
+/// Find `program` on `PATH`, then in common install folders, then on the login shell's
+/// `PATH`. An app started from the Dock, Finder or a desktop launcher gets a minimal
+/// `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin` on macOS) that misses Homebrew, npm, nvm and
+/// per-user installs. On Windows this also tries the `PATHEXT` extensions, since npm
+/// installs CLIs as `claude.cmd`, which `Command` would not find by its bare name. The
+/// shell is asked only on a miss, once; that can take a moment, so call this from a
+/// worker thread.
 pub fn which(program: &str) -> Option<PathBuf> {
     let candidate = Path::new(program);
     if candidate.components().count() > 1 {
@@ -48,12 +54,145 @@ pub fn which(program: &str) -> Option<PathBuf> {
     } else {
         vec![String::new()]
     };
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find_map(|dir| {
-        exts.iter()
-            .map(|e| dir.join(format!("{program}{e}")))
-            .find(|p| is_executable(p))
+    let find = |dirs: Vec<PathBuf>| {
+        dirs.into_iter().find_map(|dir| {
+            exts.iter()
+                .map(|e| dir.join(format!("{program}{e}")))
+                .find(|p| is_executable(p))
+        })
+    };
+    find(own_path().chain(extra_dirs()).collect()).or_else(|| {
+        find(
+            login_shell_path()
+                .iter()
+                .flat_map(std::env::split_paths)
+                .collect(),
+        )
     })
+}
+
+/// The `PATH` to run `program` with: its own folder first (where nvm, fnm or Homebrew keep
+/// the `node` an npm-installed CLI's `#!/usr/bin/env node` needs), then ours, the login
+/// shell's when it was read, and the common install folders.
+pub fn path_for(program: &Path) -> OsString {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let shell = LOGIN_PATH.get().cloned().flatten();
+    for dir in program
+        .parent()
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(own_path())
+        .chain(shell.iter().flat_map(std::env::split_paths))
+        .chain(extra_dirs())
+    {
+        if !dir.as_os_str().is_empty() && !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    std::env::join_paths(dirs).unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_default())
+}
+
+fn own_path() -> impl Iterator<Item = PathBuf> {
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+}
+
+fn home() -> Option<PathBuf> {
+    #[cfg(windows)]
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        return Some(PathBuf::from(home));
+    }
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Common install folders for the coding CLIs and node, searched after `PATH` (the same
+/// list as switchhead's).
+fn extra_dirs() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    #[cfg(unix)]
+    v.extend([
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ]);
+    if let Some(h) = home() {
+        for d in [
+            ".local/bin",
+            ".claude/local",
+            ".npm-global/bin",
+            ".local/share/mise/shims",
+            ".asdf/shims",
+            ".volta/bin",
+            ".bun/bin",
+            ".cargo/bin",
+        ] {
+            v.push(h.join(d));
+        }
+        #[cfg(windows)]
+        {
+            v.push(h.join("AppData/Roaming/npm"));
+            v.push(h.join("AppData/Local/Programs/claude"));
+        }
+    }
+    #[cfg(windows)]
+    for key in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
+        if let Some(root) = std::env::var_os(key) {
+            v.push(PathBuf::from(root).join("nodejs"));
+        }
+    }
+    v
+}
+
+static LOGIN_PATH: OnceLock<Option<OsString>> = OnceLock::new();
+
+/// The `PATH` the user's login shell sets up (Homebrew's `shellenv`, nvm, fnm, asdf...),
+/// read by running it once. `None` on Windows, where GUI apps get the full user `PATH`,
+/// or when the shell fails or takes too long.
+fn login_shell_path() -> Option<OsString> {
+    LOGIN_PATH.get_or_init(read_login_shell_path).clone()
+}
+
+#[cfg(windows)]
+fn read_login_shell_path() -> Option<OsString> {
+    None
+}
+
+#[cfg(not(windows))]
+fn read_login_shell_path() -> Option<OsString> {
+    const MARK: &str = "__SWITCHSCRIBE_PATH__";
+    let shell = std::env::var_os("SHELL")
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/bin/sh".into());
+    let mut cmd = command(&shell);
+    // Interactive too, since nvm and friends usually live in `.zshrc` / `.bashrc`. The
+    // markers skip anything the rc files print.
+    cmd.args([
+        "-i",
+        "-l",
+        "-c",
+        &format!("printf '{MARK}%s{MARK}' \"$PATH\""),
+    ])
+    .env("DISABLE_AUTO_UPDATE", "true");
+    let started = Instant::now();
+    let path = match run(cmd, "", Duration::from_secs(5), &AtomicBool::new(false)) {
+        Ok(out) => out
+            .stdout
+            .split(MARK)
+            .nth(1)
+            .filter(|p| !p.is_empty())
+            .map(OsString::from),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the login shell's PATH");
+            None
+        }
+    };
+    tracing::debug!(
+        ms = started.elapsed().as_millis() as u64,
+        found = path.is_some(),
+        "read the login shell's PATH"
+    );
+    path
 }
 
 fn is_executable(p: &Path) -> bool {
@@ -182,6 +321,24 @@ mod tests {
         let shell = if cfg!(windows) { "cmd" } else { "sh" };
         assert!(which(shell).is_some());
         assert!(which("switchscribe-no-such-program").is_none());
+    }
+
+    #[test]
+    fn child_path_starts_with_the_programs_folder() {
+        let dir = std::env::temp_dir().join("switchscribe-path-test");
+        let path: Vec<_> = std::env::split_paths(&path_for(&dir.join("claude"))).collect();
+        assert_eq!(path.first(), Some(&dir));
+        let mut unique = path.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), path.len());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reads_the_login_shells_path() {
+        // `sh -l` sets PATH from /etc/profile or keeps ours; either way it is there.
+        assert!(read_login_shell_path().is_some_and(|p| !p.is_empty()));
     }
 
     #[cfg(unix)]
