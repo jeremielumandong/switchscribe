@@ -192,7 +192,8 @@ Live captions, onboarding, error states, signed installer and auto-update.
 - Virtualize the sidebar and transcript lists (`uniform_list`) before real meeting
   counts grow; M0 renders them as plain scroll views.
 - Command palette (Ctrl+K) from switchhead's `palette.rs`.
-- Port switchhead's rotating log file and crash reports.
+- Crash reports for native crashes (the log file records Rust panics; a segfault in a C
+  library leaves only macOS's / Windows' own crash report).
 - Windows icon resource (switchhead's `build.rs`): the icon now exists
   (`packaging/icons/switchscribe.ico`); the exe itself still has none.
 - Global hotkeys (Ctrl+Shift+R / Ctrl+Shift+B work only while a switchscribe window

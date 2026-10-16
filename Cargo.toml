@@ -46,7 +46,7 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 objc2 = "0.6"
 objc2-core-audio = { version = "0.3", default-features = false, features = ["std", "AudioHardware", "objc2", "objc2-foundation", "block2", "dispatch2"] }
 objc2-core-audio-types = { version = "0.3", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
-objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFString", "CFDictionary"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFDictionary"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSObject", "NSString", "NSUUID", "NSValue"] }
 block2 = "0.6"
 tray-icon = { version = "0.26", default-features = false }
