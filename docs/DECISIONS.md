@@ -412,3 +412,16 @@ Non-obvious calls, newest last. Append when you make one.
   ad-hoc signed local build asks again after each rebuild.
 - **`Error::Unsupported` names the platform** (Linux: PipeWire after v1); it no longer
   happens on Windows or macOS.
+- **Stopping a recording closed the app on macOS.** The probable cause (no Mac to confirm
+  on): the Teams lookup took ownership of each process's bundle id string as if Core
+  Audio returned it retained. If it does not, every string was released once too often,
+  and the extra releases surfaced when the capture thread's autorelease pool drained,
+  which happens when the thread exits, that is, on Stop. Teams is now matched by pid (the
+  process tree under `MSTeams` / `Microsoft Teams*`, which also matches helpers by name),
+  so no Core Foundation object changes hands. Opening a source and each detection look
+  also run in their own autorelease pool, so anything autoreleased is freed right there
+  rather than when the thread ends.
+- **A log file on every platform** (`<data>/logs/switchscribe.log`, switchhead's
+  `log_file.rs`): a Mac app opened from Finder has no terminal, so its logs went nowhere.
+  The panic hook appends the panic and a backtrace to the file synchronously, since a
+  panic in a native callback aborts before the writer thread runs.

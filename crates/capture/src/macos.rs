@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
 use cpal::{FromSample, SampleFormat, SizedSample};
+use objc2::rc::autoreleasepool;
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
 use crate::audio::Block;
@@ -50,9 +51,12 @@ fn dev_err(e: cpal::Error) -> Error {
 
 /// The real devices.
 pub(crate) fn backend(mode: RemoteMode, mic_device: Option<String>) -> Backend {
+    // Each in its own autorelease pool, drained when the source is open: capture threads
+    // have no pool of their own, so anything Core Audio or cpal autoreleases would otherwise
+    // wait for the thread to exit, which is when the recording stops.
     Backend {
-        mic: Box::new(move || open_mic(mic_device.as_deref())),
-        remote: Box::new(move || open_remote(mode)),
+        mic: Box::new(move || autoreleasepool(|_| open_mic(mic_device.as_deref()))),
+        remote: Box::new(move || autoreleasepool(|_| open_remote(mode))),
     }
 }
 
@@ -262,14 +266,6 @@ fn supports_taps(version: &str) -> bool {
     }
 }
 
-/// Bundle ids of classic Teams (`com.microsoft.teams`), new Teams (`com.microsoft.teams2`)
-/// and their helpers (`com.microsoft.teams2.helper...`).
-fn is_teams_bundle(bundle: &str) -> bool {
-    bundle
-        .to_ascii_lowercase()
-        .starts_with("com.microsoft.teams")
-}
-
 /// Process names of Teams and its helpers ("MSTeams", "Microsoft Teams", "Microsoft Teams
 /// WebView Helper (Renderer)", "Microsoft Teams Modulehost"...).
 fn is_teams_name(name: &str) -> bool {
@@ -308,10 +304,7 @@ fn teams_processes(processes: &[tap::Process]) -> Vec<&tap::Process> {
     let tree = teams_tree();
     processes
         .iter()
-        .filter(|p| {
-            p.bundle.as_deref().is_some_and(is_teams_bundle)
-                || u32::try_from(p.pid).is_ok_and(|pid| tree.contains(&pid))
-        })
+        .filter(|p| u32::try_from(p.pid).is_ok_and(|pid| tree.contains(&pid)))
         .collect()
 }
 
@@ -329,24 +322,29 @@ pub(crate) struct CallProbe;
 
 impl crate::detect::Probe for CallProbe {
     fn probe(&mut self) -> Option<crate::detect::TeamsCall> {
-        let processes = match tap::processes() {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::debug!(error = %e, "could not list audio processes");
-                return None;
-            }
-        };
-        let teams = teams_processes(&processes);
-        let calling = teams
-            .into_iter()
-            .find(|p| tap::is_running_input(p.object))?;
-        Some(crate::detect::TeamsCall {
-            pid: u32::try_from(calling.pid).unwrap_or(0),
-            // Other apps' window titles need the Screen Recording permission on macOS;
-            // the calendar names the meeting instead.
-            title: None,
-        })
+        // The detection thread never exits, so drain each look's autoreleased objects.
+        autoreleasepool(|_| probe_once())
     }
+}
+
+fn probe_once() -> Option<crate::detect::TeamsCall> {
+    let processes = match tap::processes() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::debug!(error = %e, "could not list audio processes");
+            return None;
+        }
+    };
+    let teams = teams_processes(&processes);
+    let calling = teams
+        .into_iter()
+        .find(|p| tap::is_running_input(p.object))?;
+    Some(crate::detect::TeamsCall {
+        pid: u32::try_from(calling.pid).unwrap_or(0),
+        // Other apps' window titles need the Screen Recording permission on macOS;
+        // the calendar names the meeting instead.
+        title: None,
+    })
 }
 
 /// The Core Audio calls: process objects, taps and the aggregate device that reads one.
@@ -372,7 +370,7 @@ mod tap {
         kAudioAggregateDeviceTapAutoStartKey, kAudioAggregateDeviceTapListKey,
         kAudioAggregateDeviceUIDKey, kAudioHardwarePropertyProcessObjectList,
         kAudioHardwarePropertyTranslatePIDToProcessObject, kAudioObjectPropertyElementMain,
-        kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject, kAudioProcessPropertyBundleID,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
         kAudioProcessPropertyIsRunningInput, kAudioProcessPropertyPID,
         kAudioSubTapDriftCompensationKey, kAudioSubTapUIDKey, kAudioTapPropertyFormat,
     };
@@ -380,7 +378,7 @@ mod tap {
         AudioBuffer, AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp,
         kAudioFormatFlagIsFloat, kAudioFormatLinearPCM,
     };
-    use objc2_core_foundation::{CFDictionary, CFRetained, CFString};
+    use objc2_core_foundation::CFDictionary;
     use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
 
     use super::{Msg, TAP_DEVICE_UID};
@@ -400,8 +398,6 @@ mod tap {
         pub object: AudioObjectID,
         /// Its pid.
         pub pid: i32,
-        /// Its bundle id, when it has one.
-        pub bundle: Option<String>,
     }
 
     fn address(selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
@@ -501,16 +497,6 @@ mod tap {
         Ok(ids)
     }
 
-    /// A string property (returned retained, under the create rule).
-    fn get_string(object: AudioObjectID, selector: AudioObjectPropertySelector) -> Option<String> {
-        // SAFETY: string properties are `CFStringRef`.
-        let ptr = unsafe { get::<*mut CFString>(object, selector, None) }.ok()?;
-        let ptr = NonNull::new(ptr)?;
-        // SAFETY: Core Audio hands over a +1 reference, which this takes.
-        let string = unsafe { CFRetained::from_raw(ptr) };
-        Some(string.to_string())
-    }
-
     /// Every process with a connection to the audio server (macOS 14.2 and later).
     pub(crate) fn processes() -> Result<Vec<Process>> {
         let mut out = Vec::new();
@@ -519,11 +505,7 @@ mod tap {
             let Ok(pid) = (unsafe { get::<i32>(object, kAudioProcessPropertyPID, None) }) else {
                 continue;
             };
-            out.push(Process {
-                object,
-                pid,
-                bundle: get_string(object, kAudioProcessPropertyBundleID).filter(|b| !b.is_empty()),
-            });
+            out.push(Process { object, pid });
         }
         Ok(out)
     }
@@ -814,10 +796,6 @@ mod tests {
 
     #[test]
     fn recognizes_teams() {
-        assert!(is_teams_bundle("com.microsoft.teams2"));
-        assert!(is_teams_bundle("com.microsoft.teams2.helper.Renderer"));
-        assert!(is_teams_bundle("com.microsoft.teams"));
-        assert!(!is_teams_bundle("com.microsoft.edgemac"));
         assert!(is_teams_name("MSTeams"));
         assert!(is_teams_name("Microsoft Teams WebView Helper (Renderer)"));
         assert!(!is_teams_name("Microsoft Edge"));

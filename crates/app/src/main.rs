@@ -17,6 +17,7 @@ mod format;
 mod instance;
 mod integrations_view;
 mod live_view;
+mod log_file;
 mod meeting_view;
 mod mini_recorder;
 mod onboarding;
@@ -153,6 +154,49 @@ fn mcp(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Log to stdout and to `<data>/logs/switchscribe.log` (rotated; see [`log_file`]).
+/// Panics are written to the file synchronously, then reported as usual.
+fn init_logging() {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
+
+    let filter =
+        EnvFilter::try_from_env("SWITCHSCRIBE_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+    let dir = Paths::resolve().map(|p| p.logs_dir());
+    let file = dir
+        .as_deref()
+        .and_then(|dir| match log_file::LogFile::start(dir) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                eprintln!("switchscribe: no log file in {}: {e}", dir.display());
+                None
+            }
+        });
+    let file_layer = file.map(|f| {
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(f)
+    });
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(file_layer)
+        .init();
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(dir) = &dir {
+            log_file::record_panic(dir, info);
+        }
+        default_hook(info);
+    }));
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        os = std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+        "switchscribe starting"
+    );
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|a| a == "--version") {
@@ -162,11 +206,7 @@ fn main() -> Result<()> {
     if args.first().is_some_and(|a| a == "mcp") {
         return mcp(&args[1..]);
     }
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_env("SWITCHSCRIBE_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    init_logging();
     let started = std::time::Instant::now();
     let demo = demo::requested(&args);
     let request = instance::Request::from_args(&args);
