@@ -175,6 +175,12 @@ Live captions, onboarding, error states, signed installer and auto-update.
       the first recorded meeting without help.
 - [ ] Real-machine check: open the macOS DMG and the Linux AppImage on a clean machine;
       the demo and transcription of an imported meeting work.
+- [x] macOS capture: Teams through a Core Audio process tap on its process tree (whole
+      system as the fallback), the mic through cpal, call detection from Core Audio's
+      per-process input state; Info.plist usage strings and the audio-input entitlement.
+- [ ] Real-machine check (macOS 14.2+): record a Teams call; both permission prompts
+      appear once, the Teams meter moves with remote voices only, the Record prompt
+      appears when a call starts.
 - [ ] Real-machine check: live captions keep up on a laptop CPU with Base during a real
       call; the mini recorder grows on hover.
 - [ ] Real-machine check: install `v0.1.1` over it from the Update button; the app
@@ -227,5 +233,11 @@ Live captions, onboarding, error states, signed installer and auto-update.
   hour); stream from the Opus files if long recordings make that a problem.
 - Ship sherpa-onnx's and onnxruntime's license notices with the packages (Geist's and
   switchscribe's are bundled).
-- Capture on macOS (ScreenCaptureKit / Core Audio taps) and Linux (PipeWire); the release
-  packages build there today without it.
+- Capture on Linux (PipeWire); the AppImage builds without it. (macOS capture landed with
+  Core Audio taps; see below.)
+- macOS: Teams processes that start after a recording begins are not in its tap (the tap
+  lists process objects when it is made); rebuild the tap when Teams' process list
+  changes. Meeting titles from Teams' window need the Screen Recording permission, so
+  macOS names meetings from the calendar only.
+- macOS before 14.2: ScreenCaptureKit app audio (12.3+) could record Teams there; today
+  only the mic is recorded on those versions.

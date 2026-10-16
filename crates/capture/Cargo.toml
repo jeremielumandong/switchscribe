@@ -20,6 +20,15 @@ sysinfo.workspace = true
 wasapi.workspace = true
 windows = { workspace = true, features = ["Win32_UI_WindowsAndMessaging"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+objc2.workspace = true
+objc2-core-audio.workspace = true
+objc2-core-audio-types.workspace = true
+objc2-core-foundation.workspace = true
+objc2-foundation.workspace = true
+sysinfo.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

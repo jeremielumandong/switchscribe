@@ -328,7 +328,7 @@ pub fn settings_detection(ws: &Workspace, p: &Palette, cx: &mut Context<Workspac
         .child(note(if watching {
             "Watches for Teams holding the microphone and offers to record."
         } else {
-            "Detection needs Windows; record with the Record button."
+            "Detection needs Windows or macOS; record with the Record button."
         }));
     let when = div()
         .flex()

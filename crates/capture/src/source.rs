@@ -143,13 +143,20 @@ mod tests {
 
     #[test]
     fn fake_source_paces_in_real_time() {
+        let started = Instant::now();
         let mut s = FakeSource::new(FakeVoice::Far);
         std::thread::sleep(Duration::from_millis(50));
         let b = s.read(Duration::from_millis(10)).unwrap().unwrap();
         assert_eq!(b.channels, 2);
         assert_eq!(b.rate, 44_100);
-        // About 60 ms worth, never a burst of seconds.
-        assert!(b.frames() > 1000 && b.frames() < 10_000, "{}", b.frames());
+        // What elapsed (at least 50 ms; more on a loaded CI runner), never a burst of
+        // seconds ahead of the clock.
+        let due = (started.elapsed().as_secs_f64() * 44_100.0) as usize;
+        assert!(
+            b.frames() > 2000 && b.frames() <= due,
+            "{} of {due}",
+            b.frames()
+        );
     }
 
     #[test]

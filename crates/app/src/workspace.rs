@@ -1878,12 +1878,13 @@ impl Workspace {
                 )
             })
             .when(self.devices.is_empty(), |d| {
-                d.child(
-                    div()
-                        .text_size(ts::BODY)
-                        .text_color(p.fg3)
-                        .child("No microphones found. Capture needs Windows."),
-                )
+                d.child(div().text_size(ts::BODY).text_color(p.fg3).child(
+                    if cfg!(any(windows, target_os = "macos")) {
+                        "No microphones found."
+                    } else {
+                        "No microphones found. Capture needs Windows or macOS."
+                    },
+                ))
             })
             .child(
                 div()

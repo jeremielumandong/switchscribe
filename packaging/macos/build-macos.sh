@@ -104,18 +104,22 @@ xattr -cr "$APP"
 export COPYFILE_DISABLE=1
 
 # --- signing -------------------------------------------------------------------------------
+# The usage strings for the microphone and system audio prompts are in Info.plist.
+ENTITLEMENTS="$PACKAGING_DIR/macos/$APP_BIN.entitlements"
 if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
   log "codesigning with '$MACOS_SIGN_IDENTITY'"
-  # Hardened runtime, no entitlements: the bundled dylibs carry the same signature, and
+  # Hardened runtime. The app's one entitlement is the microphone (audio-input), which the
+  # hardened runtime otherwise denies; the bundled dylibs carry the same signature, and
   # switchscribe runs the coding CLIs as separate programs. Inside out: dylibs, then the app.
   for lib in "$APP/Contents/Frameworks/"*.dylib; do
     codesign --force --timestamp --options runtime --sign "$MACOS_SIGN_IDENTITY" "$lib"
   done
-  codesign --force --timestamp --options runtime --sign "$MACOS_SIGN_IDENTITY" "$APP"
+  codesign --force --timestamp --options runtime --entitlements "$ENTITLEMENTS" \
+    --sign "$MACOS_SIGN_IDENTITY" "$APP"
   codesign --verify --strict --verbose=2 "$APP"
 else
   log "MACOS_SIGN_IDENTITY not set: ad-hoc signing (local use only)"
-  codesign --force --deep --sign - "$APP"
+  codesign --force --deep --entitlements "$ENTITLEMENTS" --sign - "$APP"
 fi
 
 notarize() {

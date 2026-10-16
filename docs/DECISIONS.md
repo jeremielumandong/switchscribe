@@ -386,3 +386,29 @@ Non-obvious calls, newest last. Append when you make one.
 - **An app icon** (record button beside transcript lines, `packaging/icons/`) was drawn for
   the bundle, the AppImage and the installer; replace the SVGs and rerun `generate.py` to
   change it.
+
+## macOS capture
+
+- **Core Audio process taps, not ScreenCaptureKit.** A tap (`CATapDescription`, macOS
+  14.2+) on Teams' process objects is the macOS counterpart of WASAPI process loopback:
+  audio only, no screen-recording permission, the same two-track model. Teams' objects are
+  the Core Audio processes whose bundle id starts with `com.microsoft.teams` or whose pid
+  is in the tree under `MSTeams` / `Microsoft Teams*` (helpers play call audio). The tap is
+  read through a private aggregate device holding only that tap (as cpal's own loopback
+  does) with an IO block that copies into a channel. No Teams process, or a failed tap,
+  falls back to a global tap (everything but switchscribe), as Windows falls back to
+  system loopback. ScreenCaptureKit would add macOS 12.3–14.1 at the cost of the Screen
+  Recording permission and a much larger binding; left as a follow-up.
+- **The mic goes through cpal** (the default input device, or the saved cpal device id),
+  so macOS needs no second capture API. Device ids saved on Windows do not match on a Mac;
+  the default is used, with the usual "chosen microphone is missing" notice.
+- **Detection on macOS** reads `kAudioProcessPropertyIsRunningInput` on Teams' process
+  objects: the same "Teams holds the mic" signal as Windows' capture sessions. It names
+  no meeting: Teams' window titles need the Screen Recording permission, so the calendar
+  names it.
+- **Bundle:** `NSMicrophoneUsageDescription` and `NSAudioCaptureUsageDescription` in
+  `Info.plist`, and `com.apple.security.device.audio-input` as the one entitlement (the
+  hardened runtime denies the mic otherwise). macOS checks permissions per signature, so an
+  ad-hoc signed local build asks again after each rebuild.
+- **`Error::Unsupported` names the platform** (Linux: PipeWire after v1); it no longer
+  happens on Windows or macOS.
